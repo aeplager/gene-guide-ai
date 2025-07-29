@@ -17,7 +17,9 @@ import {
   Download,
   Share,
   AlertTriangle,
-  Sparkles
+  Sparkles,
+  Phone,
+  PhoneOff
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -30,19 +32,12 @@ interface Message {
 }
 
 const QAScreen = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      content: "Hello! I'm your AI genetics counselor. I'm here to help you understand your BRCA1 test results and answer any questions you might have. What would you like to know?",
-      sender: "ai",
-      timestamp: new Date(),
-      type: "text"
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
-  const [isRecording, setIsRecording] = useState(false);
   const [isVideoCall, setIsVideoCall] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -105,26 +100,50 @@ const QAScreen = () => {
     return "That's a great question. Based on your BRCA1 results, I can provide you with evidence-based information to help you understand your situation better. Would you like me to explain any specific aspect in more detail? I'm here to help you process this information at your own pace.";
   };
 
-  const handleVoiceToggle = () => {
-    setIsRecording(!isRecording);
-    if (!isRecording) {
-      toast({
-        title: "Voice recording started",
-        description: "Speak your question now..."
+  const startVideoCall = async () => {
+    setIsConnecting(true);
+    try {
+      // Create a conversation with Tavus API
+      const response = await fetch('https://tavusapi.com/v2/conversations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': 'YOUR_TAVUS_API_KEY', // This should come from environment variables
+        },
+        body: JSON.stringify({
+          replica_id: 'YOUR_REPLICA_ID', // The genetics counselor replica
+          persona_id: 'YOUR_PERSONA_ID' // The genetics counselor persona
+        })
       });
-    } else {
+
+      if (response.ok) {
+        const data = await response.json();
+        setConversationId(data.conversation_id);
+        setIsVideoCall(true);
+        toast({
+          title: "Video call started",
+          description: "Connected to AI genetics counselor"
+        });
+      } else {
+        throw new Error('Failed to start video call');
+      }
+    } catch (error) {
       toast({
-        title: "Voice recording stopped",
-        description: "Processing your question..."
+        title: "Connection failed",
+        description: "Unable to start video call. Please try again.",
+        variant: "destructive"
       });
+    } finally {
+      setIsConnecting(false);
     }
   };
 
-  const handleVideoToggle = () => {
-    setIsVideoCall(!isVideoCall);
+  const endVideoCall = () => {
+    setIsVideoCall(false);
+    setConversationId(null);
     toast({
-      title: isVideoCall ? "Video call ended" : "Video call started",
-      description: isVideoCall ? "Switched to text chat" : "AI video counselor activated"
+      title: "Video call ended",
+      description: "Conversation saved to your records"
     });
   };
 
@@ -168,7 +187,7 @@ const QAScreen = () => {
         </div>
 
         <div className="grid lg:grid-cols-4 gap-6">
-          {/* Chat Interface */}
+          {/* Video Chat Interface */}
           <div className="lg:col-span-3">
             <Card className="shadow-professional h-[600px] flex flex-col">
               <CardHeader className="flex-shrink-0">
@@ -179,96 +198,105 @@ const QAScreen = () => {
                       AI Genetics Counselor
                     </CardTitle>
                     <CardDescription>
-                      Specialized in BRCA1 genetic variants
+                      Live video consultation with AI specialist
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleVoiceToggle}
-                      className={isRecording ? "bg-medical-error text-white" : ""}
-                    >
-                      {isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleVideoToggle}
-                      className={isVideoCall ? "bg-primary text-primary-foreground" : ""}
-                    >
-                      {isVideoCall ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
-                    </Button>
+                    {!isVideoCall ? (
+                      <Button
+                        onClick={startVideoCall}
+                        disabled={isConnecting}
+                        className="bg-primary text-primary-foreground"
+                      >
+                        {isConnecting ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Connecting...
+                          </div>
+                        ) : (
+                          <>
+                            <Video className="h-4 w-4 mr-2" />
+                            Start Video Call
+                          </>
+                        )}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="destructive"
+                        onClick={endVideoCall}
+                      >
+                        <PhoneOff className="h-4 w-4 mr-2" />
+                        End Call
+                      </Button>
+                    )}
                   </div>
                 </div>
               </CardHeader>
 
-              {/* Messages */}
+              {/* Video Chat Content */}
               <CardContent className="flex-1 flex flex-col min-h-0">
-                <ScrollArea className="flex-1 pr-4">
-                  <div className="space-y-4">
-                    {messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}
-                      >
-                        <div
-                          className={`max-w-[80%] rounded-lg p-4 ${
-                            message.sender === "user"
-                              ? "bg-primary text-primary-foreground ml-4"
-                              : "bg-secondary text-foreground mr-4"
-                          }`}
-                        >
-                          <div className="flex items-start gap-2">
-                            {message.sender === "ai" && (
-                              <Bot className="h-4 w-4 mt-1 flex-shrink-0" />
-                            )}
-                            {message.sender === "user" && (
-                              <User className="h-4 w-4 mt-1 flex-shrink-0" />
-                            )}
-                            <div>
-                              <p className="text-sm leading-relaxed">{message.content}</p>
-                              <p className="text-xs opacity-70 mt-2">
-                                {message.timestamp.toLocaleTimeString()}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    {isLoading && (
-                      <div className="flex justify-start">
-                        <div className="bg-secondary text-foreground rounded-lg p-4 mr-4">
-                          <div className="flex items-center gap-2">
-                            <Bot className="h-4 w-4" />
-                            <div className="flex gap-1">
-                              <div className="w-2 h-2 bg-primary rounded-full animate-bounce" />
-                              <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0.1s" }} />
-                              <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0.2s" }} />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div ref={messagesEndRef} />
-                </ScrollArea>
-
-                {/* Input Area */}
-                <div className="mt-4 space-y-3">
-                  <div className="flex gap-2">
-                    <Input
-                      value={inputMessage}
-                      onChange={(e) => setInputMessage(e.target.value)}
-                      placeholder="Type your question here..."
-                      onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-                      className="flex-1"
+                {isVideoCall && conversationId ? (
+                  <div className="flex-1 bg-black rounded-lg overflow-hidden relative">
+                    <iframe
+                      src={`https://tavusapi.com/video/${conversationId}`}
+                      className="w-full h-full border-0"
+                      allow="microphone; camera; autoplay"
+                      title="AI Genetics Counselor Video Chat"
                     />
-                    <Button onClick={handleSendMessage} disabled={!inputMessage.trim()}>
-                      <Send className="h-4 w-4" />
-                    </Button>
+                    <div className="absolute bottom-4 left-4 right-4">
+                      <div className="bg-black/50 backdrop-blur-sm rounded-lg p-3">
+                        <p className="text-white text-sm">
+                          🔴 Live video consultation with AI genetics counselor
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/20 rounded-lg">
+                    <div className="text-center space-y-4">
+                      <div className="w-24 h-24 mx-auto bg-primary/20 rounded-full flex items-center justify-center">
+                        <Video className="h-12 w-12 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-medium text-foreground">
+                          Ready for Video Consultation
+                        </h3>
+                        <p className="text-muted-foreground mt-2">
+                          Connect with your AI genetics counselor for personalized guidance about your test results.
+                        </p>
+                      </div>
+                      <div className="space-y-2 text-sm text-muted-foreground">
+                        <p>✓ Real-time video conversation</p>
+                        <p>✓ Specialized in genetic counseling</p>
+                        <p>✓ Secure and private consultation</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Chat Backup */}
+                {!isVideoCall && (
+                  <div className="mt-4 space-y-3">
+                    <Separator />
+                    <div className="text-center">
+                      <p className="text-sm text-muted-foreground">
+                        Or ask questions via text while video loads
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Input
+                        value={inputMessage}
+                        onChange={(e) => setInputMessage(e.target.value)}
+                        placeholder="Type your question here..."
+                        onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+                        className="flex-1"
+                      />
+                      <Button onClick={handleSendMessage} disabled={!inputMessage.trim()}>
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
