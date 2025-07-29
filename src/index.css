@@ -17,42 +17,52 @@ All colors MUST be HSL.
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-
-    --muted: 210 40% 96.1%;
+    /* Medical/Healthcare Professional Theme */
+    --primary: 210 100% 45%; /* Professional medical blue */
+    --primary-foreground: 0 0% 100%;
+    --primary-light: 210 100% 88%;
+    --primary-dark: 210 100% 35%;
+    
+    --secondary: 200 15% 96%; /* Soft clinical white */
+    --secondary-foreground: 222.2 84% 4.9%;
+    
+    --muted: 210 40% 96%;
     --muted-foreground: 215.4 16.3% 46.9%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    
+    --accent: 160 85% 45%; /* Calming teal accent */
+    --accent-foreground: 0 0% 100%;
+    --accent-light: 160 85% 88%;
+    
+    --medical-success: 142 76% 36%; /* Health green */
+    --medical-warning: 38 92% 50%; /* Attention amber */
+    --medical-error: 0 84% 60%; /* Alert red */
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --ring: 210 100% 45%;
 
-    --radius: 0.5rem;
+    --radius: 0.75rem;
+
+    /* Trust & Reliability Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(210 100% 45%), hsl(200 85% 50%));
+    --gradient-accent: linear-gradient(135deg, hsl(160 85% 45%), hsl(170 75% 55%));
+    --gradient-bg: linear-gradient(180deg, hsl(210 40% 98%), hsl(200 30% 96%));
+    
+    /* Professional shadows */
+    --shadow-professional: 0 4px 20px -4px hsl(210 100% 45% / 0.15);
+    --shadow-card: 0 2px 10px -2px hsl(210 50% 25% / 0.1);
 
     --sidebar-background: 0 0% 98%;
-
     --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
+    --sidebar-primary: 210 100% 45%;
     --sidebar-primary-foreground: 0 0% 98%;
-
     --sidebar-accent: 240 4.8% 95.9%;
-
     --sidebar-accent-foreground: 240 5.9% 10%;
-
     --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-ring: 210 100% 45%;
   }
 
   .dark {
