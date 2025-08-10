@@ -4,8 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useToast } from "@/hooks/use-toast";
-import { Stethoscope, Heart, Eye, EyeOff, Loader2 } from "lucide-react";
+import { Stethoscope, Heart } from "lucide-react";
 
 const LoginScreen = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -15,103 +14,16 @@ const LoginScreen = () => {
     confirmPassword: "",
     name: ""
   });
-  const [isLoading, setIsLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [errors, setErrors] = useState<{[key: string]: string}>({});
-  
   const navigate = useNavigate();
-  const { toast } = useToast();
 
-  // Form validation
-  const validateForm = (): boolean => {
-    const newErrors: {[key: string]: string} = {};
-    
-    // Email validation
-    if (!formData.email) {
-      newErrors.email = "Email is required";
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = "Email is invalid";
-    }
-    
-    // Password validation
-    if (!formData.password) {
-      newErrors.password = "Password is required";
-    } else if (formData.password.length < 6) {
-      newErrors.password = "Password must be at least 6 characters";
-    }
-    
-    // Name validation for signup
-    if (!isLogin && !formData.name.trim()) {
-      newErrors.name = "Full name is required";
-    }
-    
-    // Confirm password validation for signup
-    if (!isLogin) {
-      if (!formData.confirmPassword) {
-        newErrors.confirmPassword = "Please confirm your password";
-      } else if (formData.password !== formData.confirmPassword) {
-        newErrors.confirmPassword = "Passwords do not match";
-      }
-    }
-    
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!validateForm()) {
-      toast({
-        title: "Form Error",
-        description: "Please fix the errors below",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    setIsLoading(true);
-    
-    try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      toast({
-        title: isLogin ? "Login Successful" : "Account Created",
-        description: isLogin ? "Welcome back!" : "Welcome to GeneticsCare AI!",
-      });
-      
-      // Navigate to introduction page
-      navigate("/introduction");
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Something went wrong. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    // Simulate login/signup
+    navigate("/introduction");
   };
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    // Clear error when user starts typing
-    if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: "" }));
-    }
-  };
-
-  const toggleLoginMode = () => {
-    setIsLogin(!isLogin);
-    setErrors({});
-    setFormData({
-      email: "",
-      password: "",
-      confirmPassword: "",
-      name: ""
-    });
   };
 
   return (
@@ -157,11 +69,7 @@ const LoginScreen = () => {
                     value={formData.name}
                     onChange={(e) => handleInputChange("name", e.target.value)}
                     required={!isLogin}
-                    className={errors.name ? "border-destructive" : ""}
                   />
-                  {errors.name && (
-                    <p className="text-sm text-destructive">{errors.name}</p>
-                  )}
                 </div>
               )}
               
@@ -173,88 +81,43 @@ const LoginScreen = () => {
                   value={formData.email}
                   onChange={(e) => handleInputChange("email", e.target.value)}
                   required
-                  className={errors.email ? "border-destructive" : ""}
-                  placeholder="Enter your email"
                 />
-                {errors.email && (
-                  <p className="text-sm text-destructive">{errors.email}</p>
-                )}
               </div>
               
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    value={formData.password}
-                    onChange={(e) => handleInputChange("password", e.target.value)}
-                    required
-                    className={errors.password ? "border-destructive pr-10" : "pr-10"}
-                    placeholder="Enter your password"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                {errors.password && (
-                  <p className="text-sm text-destructive">{errors.password}</p>
-                )}
+                <Input
+                  id="password"
+                  type="password"
+                  value={formData.password}
+                  onChange={(e) => handleInputChange("password", e.target.value)}
+                  required
+                />
               </div>
 
               {!isLogin && (
                 <div className="space-y-2">
                   <Label htmlFor="confirmPassword">Confirm Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="confirmPassword"
-                      type={showConfirmPassword ? "text" : "password"}
-                      value={formData.confirmPassword}
-                      onChange={(e) => handleInputChange("confirmPassword", e.target.value)}
-                      required={!isLogin}
-                      className={errors.confirmPassword ? "border-destructive pr-10" : "pr-10"}
-                      placeholder="Confirm your password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  {errors.confirmPassword && (
-                    <p className="text-sm text-destructive">{errors.confirmPassword}</p>
-                  )}
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    value={formData.confirmPassword}
+                    onChange={(e) => handleInputChange("confirmPassword", e.target.value)}
+                    required={!isLogin}
+                  />
                 </div>
               )}
 
-              <Button 
-                type="submit" 
-                className="w-full bg-gradient-primary"
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {isLogin ? "Signing In..." : "Creating Account..."}
-                  </>
-                ) : (
-                  isLogin ? "Sign In" : "Create Account"
-                )}
+              <Button type="submit" className="w-full bg-gradient-primary">
+                {isLogin ? "Sign In" : "Create Account"}
               </Button>
             </form>
 
             <div className="mt-6 text-center">
               <button
                 type="button"
-                onClick={toggleLoginMode}
-                className="text-primary hover:underline disabled:opacity-50"
-                disabled={isLoading}
+                onClick={() => setIsLogin(!isLogin)}
+                className="text-primary hover:underline"
               >
                 {isLogin 
                   ? "Don't have an account? Sign up" 
