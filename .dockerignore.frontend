@@ -1,0 +1,39 @@
+# Frontend .dockerignore (for building Dockerfile.frontend)
+.venv
+venv
+__pycache__
+*.pyc
+app.py
+tavus_backend.py
+requirements.txt
+
+# Node
+node_modules/.cache
+.npm
+.yarn-cache
+
+# Build artifacts
+dist/.cache
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# Env files (build args handle these)
+.env
+.env.local
+
+# Docker
+Dockerfile.backend
+docker-compose*.yml
+
+# Misc
+.DS_Store
+*.log
+static-site
+

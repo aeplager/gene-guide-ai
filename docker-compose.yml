@@ -1,0 +1,34 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      - TAVUS_API_KEY=${TAVUS_API_KEY}
+      - TAVUS_REPLICA_ID=${TAVUS_REPLICA_ID}
+      - TAVUS_PERSONA_ID=${TAVUS_PERSONA_ID}
+      - TAVUS_CALLBACK_URL=${TAVUS_CALLBACK_URL}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8090}
+      - DB_CONNECTION_STRING=${DB_CONNECTION_STRING}
+      - COMPANY_ID=${COMPANY_ID}
+      - CUSTOM_LLM_BASE_URL=${CUSTOM_LLM_BASE_URL}
+      - CUSTOM_LLM_API_KEY=${CUSTOM_LLM_API_KEY}
+      - CUSTOM_LLM_PERSONA_ID=${CUSTOM_LLM_PERSONA_ID}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXP_HOURS=${JWT_EXP_HOURS:-12}
+      - TAVUS_CUSTOM_LLM_ENABLE=${TAVUS_CUSTOM_LLM_ENABLE:-true}
+    ports:
+      - "8086:8081"
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        - VITE_TAVUS_BACKEND_URL=http://localhost:8086
+    depends_on:
+      - backend
+    ports:
+      - "8090:80"
+
+

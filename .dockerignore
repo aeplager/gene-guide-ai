@@ -1,0 +1,49 @@
+# Backend .dockerignore (Python/Flask)
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.venv
+venv
+env
+.env
+.env.local
+
+# Frontend artifacts (not needed in backend image)
+node_modules
+dist
+.vite
+.lovable
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Docs
+*.md
+!README.md
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Misc
+.DS_Store
+*.log
+tavus_backend.py
+static-site
+

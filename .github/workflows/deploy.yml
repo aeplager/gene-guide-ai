@@ -1,0 +1,159 @@
+name: Deploy Gene Guide AI to Azure Container Apps
+
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  id-token: write   # for OIDC login
+  contents: read
+
+env:
+  # Azure Container Registry
+  ACR_LOGIN_SERVER: geneguidellm.azurecr.io
+  ACR_NAME: geneguidellm
+
+  # Image names
+  IMAGE_NAME: gene-guide-backend
+  FRONTEND_IMAGE_NAME: gene-guide-frontend
+
+  # Azure Resource Group and Container Apps Environment
+  RESOURCE_GROUP: rg_custom_llm
+  ENVIRONMENT: custom-llm-env
+
+  # Container App names and target ports
+  APP_NAME: gene-guide-backend
+  TARGET_PORT: 8081
+  FRONTEND_APP_NAME: gene-guide-frontend
+  FRONTEND_TARGET_PORT: 80
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ============ BACKEND ============
+      - name: Build & Push Backend Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.backend
+          push: true
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Deploy/Update Backend Container App
+        id: deploy_backend
+        uses: azure/cli@v2
+        with:
+          azcliversion: "2.78.0"
+          inlineScript: |
+            # Deploy backend (create or update)
+            az containerapp up \
+              --name ${{ env.APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment ${{ env.ENVIRONMENT }} \
+              --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+              --target-port ${{ env.TARGET_PORT }} \
+              --ingress external
+
+            # Capture backend FQDN for frontend build
+            BACKEND_FQDN=$(az containerapp show -g ${{ env.RESOURCE_GROUP }} -n ${{ env.APP_NAME }} --query "properties.configuration.ingress.fqdn" -o tsv)
+            echo "BACKEND_FQDN=$BACKEND_FQDN" >> $GITHUB_ENV
+            echo "backend_url=https://$BACKEND_FQDN" >> $GITHUB_OUTPUT
+            echo "Backend deployed at: https://$BACKEND_FQDN"
+
+            # Set environment variables for backend
+            BACKEND_CONTAINER=$(az containerapp show -g ${{ env.RESOURCE_GROUP }} -n ${{ env.APP_NAME }} --query "properties.template.containers[0].name" -o tsv)
+            if [ -n "$BACKEND_CONTAINER" ]; then
+              echo "Setting backend environment variables..."
+              az containerapp update \
+                --name ${{ env.APP_NAME }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --container-name "$BACKEND_CONTAINER" \
+                --set-env-vars \
+                  TAVUS_API_KEY="${{ secrets.TAVUS_API_KEY }}" \
+                  TAVUS_REPLICA_ID="${{ secrets.TAVUS_REPLICA_ID }}" \
+                  TAVUS_PERSONA_ID="${{ secrets.TAVUS_PERSONA_ID }}" \
+                  TAVUS_CALLBACK_URL="https://$BACKEND_FQDN/tavus/callback" \
+                  DB_CONNECTION_STRING="${{ secrets.DB_CONNECTION_STRING }}" \
+                  COMPANY_ID="${{ secrets.COMPANY_ID }}" \
+                  JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+                  JWT_EXP_HOURS="12" \
+                  CUSTOM_LLM_BASE_URL="${{ secrets.CUSTOM_LLM_BASE_URL }}" \
+                  CUSTOM_LLM_API_KEY="${{ secrets.CUSTOM_LLM_API_KEY }}" \
+                  CUSTOM_LLM_PERSONA_ID="${{ secrets.CUSTOM_LLM_PERSONA_ID }}" \
+                  TAVUS_CUSTOM_LLM_ENABLE="true" \
+                  CORS_ORIGINS="https://$BACKEND_FQDN" \
+                || echo "Warning: Failed to set env vars (non-fatal)"
+            fi
+
+      # ============ FRONTEND ============
+      - name: Build & Push Frontend Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.frontend
+          push: true
+          build-args: |
+            VITE_TAVUS_BACKEND_URL=${{ steps.deploy_backend.outputs.backend_url }}
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:latest
+
+      - name: Deploy/Update Frontend Container App
+        id: deploy_frontend
+        uses: azure/cli@v2
+        with:
+          azcliversion: "2.78.0"
+          inlineScript: |
+            # Deploy frontend (create or update)
+            az containerapp up \
+              --name ${{ env.FRONTEND_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment ${{ env.ENVIRONMENT }} \
+              --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }} \
+              --target-port ${{ env.FRONTEND_TARGET_PORT }} \
+              --ingress external
+
+            # Capture frontend FQDN
+            FRONTEND_FQDN=$(az containerapp show -g ${{ env.RESOURCE_GROUP }} -n ${{ env.FRONTEND_APP_NAME }} --query "properties.configuration.ingress.fqdn" -o tsv)
+            echo "FRONTEND_FQDN=$FRONTEND_FQDN" >> $GITHUB_ENV
+            echo "frontend_url=https://$FRONTEND_FQDN" >> $GITHUB_OUTPUT
+            echo "Frontend deployed at: https://$FRONTEND_FQDN"
+
+            # Update backend CORS to allow frontend origin
+            BACKEND_CONTAINER=$(az containerapp show -g ${{ env.RESOURCE_GROUP }} -n ${{ env.APP_NAME }} --query "properties.template.containers[0].name" -o tsv)
+            if [ -n "$FRONTEND_FQDN" ] && [ -n "$BACKEND_CONTAINER" ]; then
+              echo "Updating backend CORS_ORIGINS to: https://$FRONTEND_FQDN"
+              az containerapp update \
+                --name ${{ env.APP_NAME }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --container-name "$BACKEND_CONTAINER" \
+                --set-env-vars CORS_ORIGINS="https://$FRONTEND_FQDN" || true
+            fi
+
+      - name: Echo Deployment FQDNs
+        run: |
+          echo "====================================="
+          echo "Deployment Complete!"
+          echo "====================================="
+          echo "Backend:  ${{ steps.deploy_backend.outputs.backend_url }}"
+          echo "Frontend: ${{ steps.deploy_frontend.outputs.frontend_url }}"
+          echo "====================================="
+
