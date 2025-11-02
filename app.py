@@ -634,6 +634,80 @@ def save_base_information():
         if conn:
             db_pool.putconn(conn)
 
+@app.get("/base-information/<user_id>")
+def get_base_information(user_id):
+    """
+    Fetch existing BaseInformation for a user to pre-populate the introduction form
+    """
+    if not db_pool:
+        return jsonify({"error": "database_not_configured"}), 500
+    
+    # Validate user_id is a valid UUID format
+    try:
+        uuid.UUID(str(user_id))
+    except ValueError:
+        app.logger.error(f"Invalid UUID format for user_id: {user_id}")
+        return jsonify({"error": "invalid_user_id", "message": "user_id must be a valid UUID"}), 400
+    
+    app.logger.info(f"📖 Fetching BaseInformation for user_id={user_id}")
+    
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch user's existing data with joined table info
+            cur.execute('''
+                SELECT 
+                    bi."UserID",
+                    bi."PersonaTestTypeID",
+                    bi."ClassificationTypeID",
+                    bi."Gene",
+                    bi."Mutation",
+                    bi."Uploaded",
+                    bi."CachedAnalysis",
+                    bi."AnalysisCachedAt",
+                    ptt."PersonaTestType",
+                    ct."ClassificationType"
+                FROM "GenCom"."BaseInformation" bi
+                INNER JOIN "GenCom"."PersonaTestType" ptt 
+                    ON bi."PersonaTestTypeID" = ptt."PersonaTestTypeID"
+                INNER JOIN "GenCom"."ClassificationType" ct 
+                    ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
+                WHERE bi."UserID" = %s
+                LIMIT 1
+            ''', (user_id,))
+            
+            result = cur.fetchone()
+            
+            if not result:
+                app.logger.info(f"ℹ️  No BaseInformation found for user_id={user_id}")
+                return jsonify({"exists": False}), 200
+            
+            # Convert result to JSON-friendly format
+            data = {
+                "exists": True,
+                "userId": result["UserID"],
+                "personaTestTypeId": result["PersonaTestTypeID"],
+                "personaTestType": result["PersonaTestType"],
+                "classificationTypeId": result["ClassificationTypeID"],
+                "classificationType": result["ClassificationType"],
+                "gene": result["Gene"],
+                "mutation": result["Mutation"],
+                "uploaded": bool(result["Uploaded"]) if result["Uploaded"] is not None else None,
+                "cachedAnalysis": result["CachedAnalysis"],
+                "analysisCachedAt": result["AnalysisCachedAt"].isoformat() if result["AnalysisCachedAt"] else None
+            }
+            
+            app.logger.info(f"✅ Found BaseInformation: persona={data['personaTestType']}, gene={data['gene']}")
+            return jsonify(data), 200
+            
+    except Exception as e:
+        app.logger.exception(f"❌ get_base_information:error {type(e).__name__}: {e}")
+        return jsonify({"error": "database_fetch_failed", "message": str(e)}), 500
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+
 # Authentication Endpoints
 @app.post("/auth/login")
 def auth_login():
@@ -691,7 +765,368 @@ def auth_login():
         if conn:
             db_pool.putconn(conn)
 
-# Condition Analysis Endpoint
+# Condition Analysis Endpoints (Progressive Loading)
+@app.get("/condition-analysis/<user_id>/basic")
+def get_condition_analysis_basic(user_id):
+    """
+    FAST endpoint - Returns only condition, riskLevel, and description
+    Used for immediate page rendering (Part 1 of 2)
+    """
+    if not db_pool:
+        return jsonify({"error": "database_not_configured"}), 500
+    
+    app.logger.info(f"⚡ condition_analysis:basic:request user_id={user_id}")
+    
+    conn = None
+    try:
+        # Validate user_id is a valid UUID
+        try:
+            uuid.UUID(str(user_id))
+        except ValueError:
+            app.logger.error(f"Invalid UUID format for user_id: {user_id}")
+            return jsonify({"error": "invalid_user_id"}), 400
+        
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch user's saved genetic information
+            cur.execute('''
+                SELECT 
+                    bi."Gene",
+                    bi."Mutation",
+                    ct."ClassificationType"
+                FROM "GenCom"."BaseInformation" bi
+                JOIN "GenCom"."ClassificationType" ct 
+                    ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
+                WHERE bi."UserID" = %s
+            ''', (user_id,))
+            
+            result = cur.fetchone()
+            
+            if not result:
+                app.logger.warning(f"⚠️  No base information found for user_id={user_id}")
+                return jsonify({"error": "no_genetic_data_found", "message": "Please complete the introductory screen first"}), 404
+            
+            gene = result["Gene"]
+            mutation = result["Mutation"]
+            classification = result["ClassificationType"]
+            
+            # Check if required fields are present
+            if not gene or not mutation:
+                app.logger.warning(f"⚠️  Incomplete genetic data for user_id={user_id}")
+                return jsonify({"error": "incomplete_genetic_data", "message": "Gene and Mutation are required"}), 400
+            
+            app.logger.info(f"📊 Retrieved: gene={gene}, mutation={mutation}, classification={classification}")
+            
+            # Check cache for basic info
+            cur.execute('''
+                SELECT "CachedAnalysisBasic", "AnalysisCachedAt"
+                FROM "GenCom"."BaseInformation"
+                WHERE "UserID" = %s 
+                  AND "CachedAnalysisBasic" IS NOT NULL
+            ''', (user_id,))
+            
+            cached_result = cur.fetchone()
+            
+            # Use cache if it exists and is less than 7 days old
+            if cached_result and cached_result.get("CachedAnalysisBasic"):
+                cached_at = cached_result.get("AnalysisCachedAt")
+                
+                # Check if cache is still valid (less than 7 days old)
+                cache_valid = False
+                if cached_at:
+                    cache_age = datetime.utcnow() - cached_at
+                    cache_valid = cache_age < timedelta(days=7)
+                    app.logger.info(f"📦 Found cached basic analysis (age: {cache_age.days} days)")
+                
+                if cache_valid:
+                    try:
+                        cached_data = json.loads(cached_result["CachedAnalysisBasic"])
+                        app.logger.info("✅ Returning cached basic analysis (fast path)")
+                        return jsonify(cached_data), 200
+                    except json.JSONDecodeError:
+                        app.logger.warning("⚠️ Invalid cached JSON, regenerating...")
+            
+            # No valid cache - generate new basic analysis
+            app.logger.info("🤖 Calling custom LLM for BASIC condition analysis...")
+            
+            # PART 1: Basic prompt (fast response - only condition, risk, description)
+            prompt = f"""You are a professional genetic counselor providing educational information about genetic test results. 
+
+Given the following genetic information:
+- Gene: {gene}
+- Variant/Mutation: {mutation}
+- Classification: {classification}
+
+Please provide a BRIEF initial analysis in the following JSON format:
+
+{{
+  "condition": "Primary condition name associated with this gene variant",
+  "riskLevel": "High/Moderate/Low",
+  "description": "A clear, patient-friendly 2-3 sentence description of what this variant means"
+}}
+
+Important guidelines:
+- Use clear, non-technical language suitable for patients
+- Base risk level on the classification: Pathogenic/Likely Pathogenic = High, VUS = Moderate, Benign/Likely Benign = Low
+- Be compassionate and supportive in tone
+- Provide specific, evidence-based information
+
+CRITICAL: Respond ONLY with the JSON object, no additional text."""
+
+            try:
+                # Call custom LLM with smaller max_tokens for faster response
+                llm_response = call_custom_llm(
+                    user_message=prompt,
+                    max_tokens=384,  # Smaller for basic response
+                    stream=False
+                )
+                
+                # Extract the assistant's message
+                if "choices" in llm_response and len(llm_response["choices"]) > 0:
+                    ai_content = llm_response["choices"][0].get("message", {}).get("content", "")
+                    app.logger.info(f"✅ Custom LLM basic response received: {len(ai_content)} chars")
+                    
+                    # Parse the JSON response
+                    try:
+                        # Clean the response (remove markdown code blocks if present)
+                        cleaned_content = ai_content.strip()
+                        if cleaned_content.startswith("```json"):
+                            cleaned_content = cleaned_content[7:]
+                        if cleaned_content.startswith("```"):
+                            cleaned_content = cleaned_content[3:]
+                        if cleaned_content.endswith("```"):
+                            cleaned_content = cleaned_content[:-3]
+                        cleaned_content = cleaned_content.strip()
+                        
+                        condition_data = json.loads(cleaned_content)
+                        
+                        # Add the gene, mutation, and classification to the response
+                        condition_data["gene"] = gene
+                        condition_data["variant"] = mutation
+                        condition_data["classification"] = classification
+                        
+                        # Cache the basic analysis
+                        try:
+                            cache_json = json.dumps(condition_data)
+                            cur.execute('''
+                                UPDATE "GenCom"."BaseInformation"
+                                SET "CachedAnalysisBasic" = %s,
+                                    "AnalysisCachedAt" = (now() at time zone 'utc')
+                                WHERE "UserID" = %s
+                            ''', (cache_json, user_id))
+                            conn.commit()
+                            app.logger.info("💾 Basic analysis cached to database")
+                        except Exception as cache_error:
+                            app.logger.warning(f"⚠️ Failed to cache basic analysis (non-fatal): {cache_error}")
+                        
+                        app.logger.info(f"✅ condition_analysis:basic:success condition={condition_data.get('condition')}")
+                        return jsonify(condition_data), 200
+                        
+                    except json.JSONDecodeError as je:
+                        app.logger.error(f"❌ Failed to parse LLM response as JSON: {je}")
+                        app.logger.error(f"Raw response (first 500 chars): {ai_content[:500]}")
+                        return jsonify({
+                            "error": "invalid_llm_response", 
+                            "message": "The AI returned an invalid format",
+                            "raw": ai_content[:500]
+                        }), 500
+                else:
+                    app.logger.error("❌ No choices in LLM response")
+                    return jsonify({"error": "empty_llm_response", "message": "The AI did not return a response"}), 500
+                    
+            except ValueError as ve:
+                # Custom LLM not configured
+                app.logger.error(f"❌ Custom LLM configuration error: {ve}")
+                return jsonify({"error": "llm_not_configured", "message": str(ve)}), 500
+            except Exception as llm_error:
+                app.logger.exception(f"❌ Error calling custom LLM: {llm_error}")
+                return jsonify({"error": "llm_call_failed", "message": str(llm_error)}), 500
+            
+    except Exception as e:
+        app.logger.exception(f"❌ condition_analysis:basic:error {type(e).__name__}: {e}")
+        return jsonify({"error": "analysis_failed", "message": str(e)}), 500
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+
+@app.get("/condition-analysis/<user_id>/detailed")
+def get_condition_analysis_detailed(user_id):
+    """
+    DETAILED endpoint - Returns implications, recommendations, and resources
+    Called after page renders with basic info (Part 2 of 2)
+    """
+    if not db_pool:
+        return jsonify({"error": "database_not_configured"}), 500
+    
+    app.logger.info(f"📋 condition_analysis:detailed:request user_id={user_id}")
+    
+    conn = None
+    try:
+        # Validate user_id is a valid UUID
+        try:
+            uuid.UUID(str(user_id))
+        except ValueError:
+            app.logger.error(f"Invalid UUID format for user_id: {user_id}")
+            return jsonify({"error": "invalid_user_id"}), 400
+        
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch user's saved genetic information
+            cur.execute('''
+                SELECT 
+                    bi."Gene",
+                    bi."Mutation",
+                    ct."ClassificationType"
+                FROM "GenCom"."BaseInformation" bi
+                JOIN "GenCom"."ClassificationType" ct 
+                    ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
+                WHERE bi."UserID" = %s
+            ''', (user_id,))
+            
+            result = cur.fetchone()
+            
+            if not result:
+                app.logger.warning(f"⚠️  No base information found for user_id={user_id}")
+                return jsonify({"error": "no_genetic_data_found", "message": "Please complete the introductory screen first"}), 404
+            
+            gene = result["Gene"]
+            mutation = result["Mutation"]
+            classification = result["ClassificationType"]
+            
+            app.logger.info(f"📊 Retrieved: gene={gene}, mutation={mutation}, classification={classification}")
+            
+            # Check cache for detailed info
+            cur.execute('''
+                SELECT "CachedAnalysisDetailed"
+                FROM "GenCom"."BaseInformation"
+                WHERE "UserID" = %s 
+                  AND "CachedAnalysisDetailed" IS NOT NULL
+            ''', (user_id,))
+            
+            cached_result = cur.fetchone()
+            
+            # Use cache if it exists
+            if cached_result and cached_result.get("CachedAnalysisDetailed"):
+                try:
+                    cached_data = json.loads(cached_result["CachedAnalysisDetailed"])
+                    app.logger.info("✅ Returning cached detailed analysis (fast path)")
+                    return jsonify(cached_data), 200
+                except json.JSONDecodeError:
+                    app.logger.warning("⚠️ Invalid cached JSON, regenerating...")
+            
+            # No valid cache - generate new detailed analysis
+            app.logger.info("🤖 Calling custom LLM for DETAILED condition analysis...")
+            
+            # PART 2: Detailed prompt (implications, recommendations, resources)
+            prompt = f"""You are a professional genetic counselor providing educational information about genetic test results. 
+
+Given the following genetic information:
+- Gene: {gene}
+- Variant/Mutation: {mutation}
+- Classification: {classification}
+
+Please provide DETAILED guidance in the following JSON format:
+
+{{
+  "implications": [
+    "First health implication",
+    "Second health implication",
+    "Third health implication",
+    "Fourth health implication"
+  ],
+  "recommendations": [
+    "First recommended action",
+    "Second recommended action",
+    "Third recommended action",
+    "Fourth recommended action"
+  ],
+  "resources": [
+    "First educational resource name",
+    "Second educational resource name",
+    "Third educational resource name",
+    "Fourth educational resource name"
+  ]
+}}
+
+Important guidelines:
+- Use clear, non-technical language suitable for patients
+- Focus on actionable information
+- Include both risks and positive steps they can take
+- Be compassionate and supportive in tone
+- Provide specific, evidence-based information
+
+CRITICAL: Respond ONLY with the JSON object, no additional text."""
+
+            try:
+                # Call custom LLM
+                llm_response = call_custom_llm(
+                    user_message=prompt,
+                    max_tokens=1024,
+                    stream=False
+                )
+                
+                # Extract the assistant's message
+                if "choices" in llm_response and len(llm_response["choices"]) > 0:
+                    ai_content = llm_response["choices"][0].get("message", {}).get("content", "")
+                    app.logger.info(f"✅ Custom LLM detailed response received: {len(ai_content)} chars")
+                    
+                    # Parse the JSON response
+                    try:
+                        # Clean the response
+                        cleaned_content = ai_content.strip()
+                        if cleaned_content.startswith("```json"):
+                            cleaned_content = cleaned_content[7:]
+                        if cleaned_content.startswith("```"):
+                            cleaned_content = cleaned_content[3:]
+                        if cleaned_content.endswith("```"):
+                            cleaned_content = cleaned_content[:-3]
+                        cleaned_content = cleaned_content.strip()
+                        
+                        condition_data = json.loads(cleaned_content)
+                        
+                        # Cache the detailed analysis
+                        try:
+                            cache_json = json.dumps(condition_data)
+                            cur.execute('''
+                                UPDATE "GenCom"."BaseInformation"
+                                SET "CachedAnalysisDetailed" = %s
+                                WHERE "UserID" = %s
+                            ''', (cache_json, user_id))
+                            conn.commit()
+                            app.logger.info("💾 Detailed analysis cached to database")
+                        except Exception as cache_error:
+                            app.logger.warning(f"⚠️ Failed to cache detailed analysis (non-fatal): {cache_error}")
+                        
+                        app.logger.info(f"✅ condition_analysis:detailed:success")
+                        return jsonify(condition_data), 200
+                        
+                    except json.JSONDecodeError as je:
+                        app.logger.error(f"❌ Failed to parse LLM response as JSON: {je}")
+                        app.logger.error(f"Raw response (first 500 chars): {ai_content[:500]}")
+                        return jsonify({
+                            "error": "invalid_llm_response", 
+                            "message": "The AI returned an invalid format",
+                            "raw": ai_content[:500]
+                        }), 500
+                else:
+                    app.logger.error("❌ No choices in LLM response")
+                    return jsonify({"error": "empty_llm_response", "message": "The AI did not return a response"}), 500
+                    
+            except ValueError as ve:
+                app.logger.error(f"❌ Custom LLM configuration error: {ve}")
+                return jsonify({"error": "llm_not_configured", "message": str(ve)}), 500
+            except Exception as llm_error:
+                app.logger.exception(f"❌ Error calling custom LLM: {llm_error}")
+                return jsonify({"error": "llm_call_failed", "message": str(llm_error)}), 500
+            
+    except Exception as e:
+        app.logger.exception(f"❌ condition_analysis:detailed:error {type(e).__name__}: {e}")
+        return jsonify({"error": "analysis_failed", "message": str(e)}), 500
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+
+# Condition Analysis Endpoint (Legacy - Full Response)
 @app.get("/condition-analysis/<user_id>")
 def get_condition_analysis(user_id):
     """
@@ -741,6 +1176,38 @@ def get_condition_analysis(user_id):
                 return jsonify({"error": "incomplete_genetic_data", "message": "Gene and Mutation are required"}), 400
             
             app.logger.info(f"📊 Retrieved: gene={gene}, mutation={mutation}, classification={classification}")
+            
+            # Check if we have cached analysis for this gene/mutation combo
+            cur.execute('''
+                SELECT "CachedAnalysis", "AnalysisCachedAt"
+                FROM "GenCom"."BaseInformation"
+                WHERE "UserID" = %s 
+                  AND "CachedAnalysis" IS NOT NULL
+            ''', (user_id,))
+            
+            cached_result = cur.fetchone()
+            
+            # Use cache if it exists and is less than 7 days old
+            if cached_result and cached_result.get("CachedAnalysis"):
+                cached_at = cached_result.get("AnalysisCachedAt")
+                
+                # Check if cache is still valid (less than 7 days old)
+                cache_valid = False
+                if cached_at:
+                    cache_age = datetime.utcnow() - cached_at
+                    cache_valid = cache_age < timedelta(days=7)
+                    app.logger.info(f"📦 Found cached analysis (age: {cache_age.days} days)")
+                
+                if cache_valid:
+                    try:
+                        cached_data = json.loads(cached_result["CachedAnalysis"])
+                        app.logger.info("✅ Returning cached analysis (fast path)")
+                        return jsonify(cached_data), 200
+                    except json.JSONDecodeError:
+                        app.logger.warning("⚠️ Invalid cached JSON, regenerating...")
+            
+            # No valid cache - generate new analysis
+            app.logger.info("🤖 Calling custom LLM for condition analysis...")
             
             # Construct the AI prompt for genetic counseling
             prompt = f"""You are a professional genetic counselor providing educational information about genetic test results. 
@@ -819,6 +1286,21 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         condition_data["gene"] = gene
                         condition_data["variant"] = mutation
                         condition_data["classification"] = classification
+                        
+                        # Cache the analysis in the database for future requests
+                        try:
+                            cache_json = json.dumps(condition_data)
+                            cur.execute('''
+                                UPDATE "GenCom"."BaseInformation"
+                                SET "CachedAnalysis" = %s,
+                                    "AnalysisCachedAt" = (now() at time zone 'utc')
+                                WHERE "UserID" = %s
+                            ''', (cache_json, user_id))
+                            conn.commit()
+                            app.logger.info("💾 Analysis cached to database for faster future access")
+                        except Exception as cache_error:
+                            app.logger.warning(f"⚠️ Failed to cache analysis (non-fatal): {cache_error}")
+                            # Continue anyway - caching failure shouldn't break the response
                         
                         app.logger.info(f"✅ condition_analysis:success condition={condition_data.get('condition')}")
                         return jsonify(condition_data), 200

@@ -15,14 +15,20 @@ import {
   Users,
   Shield
 } from "lucide-react";
+import { useWarmLLM } from "@/hooks/useWarmLLM";
 
 const ConditionScreen = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [loadingDetailed, setLoadingDetailed] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<any>(null);
+  const [detailedResults, setDetailedResults] = useState<any>(null);
   
   const backendBase = import.meta.env.DEV ? '' : (import.meta.env.VITE_TAVUS_BACKEND_URL || '');
+  
+  // Pre-warm the LLM when user enters this screen
+  useWarmLLM();
 
   useEffect(() => {
     const fetchConditionAnalysis = async () => {
@@ -39,29 +45,47 @@ const ConditionScreen = () => {
       }
 
       try {
+        // STEP 1: Fetch BASIC info first (fast - shows immediately)
         setLoading(true);
-        console.log(`[condition] Fetching analysis for userId: ${userId}`);
-        console.log(`[condition] Backend URL: ${backendBase}/condition-analysis/${userId}`);
+        console.log(`[condition] ⚡ Fetching BASIC analysis for userId: ${userId}`);
+        console.log(`[condition] Backend URL: ${backendBase}/condition-analysis/${userId}/basic`);
         
-        const response = await fetch(`${backendBase}/condition-analysis/${userId}`);
+        const basicResponse = await fetch(`${backendBase}/condition-analysis/${userId}/basic`);
         
-        console.log('[condition] Response status:', response.status);
+        console.log('[condition] Basic response status:', basicResponse.status);
         
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
+        if (!basicResponse.ok) {
+          const errorData = await basicResponse.json().catch(() => ({}));
           console.error('[condition] Error response:', errorData);
-          throw new Error(errorData.message || `Failed to fetch analysis: ${response.status}`);
+          throw new Error(errorData.message || `Failed to fetch analysis: ${basicResponse.status}`);
         }
         
-        const data = await response.json();
-        console.log('[condition] Analysis received:', data);
-        setResults(data);
+        const basicData = await basicResponse.json();
+        console.log('[condition] ✅ Basic analysis received:', basicData);
+        setResults(basicData);
+        setLoading(false);  // Page can render now!
+        
+        // STEP 2: Fetch DETAILED info in background (slower - fills in later)
+        console.log(`[condition] 📋 Fetching DETAILED analysis for userId: ${userId}`);
+        setLoadingDetailed(true);
+        
+        const detailedResponse = await fetch(`${backendBase}/condition-analysis/${userId}/detailed`);
+        
+        if (detailedResponse.ok) {
+          const detailedData = await detailedResponse.json();
+          console.log('[condition] ✅ Detailed analysis received:', detailedData);
+          setDetailedResults(detailedData);
+        } else {
+          console.error('[condition] Failed to fetch detailed analysis (non-fatal)');
+          // Non-fatal - page still shows basic info
+        }
         
       } catch (err: any) {
         console.error('[condition] Error fetching analysis:', err);
         setError(err.message || "Failed to load analysis");
-      } finally {
         setLoading(false);
+      } finally {
+        setLoadingDetailed(false);
       }
     };
 
@@ -111,7 +135,8 @@ const ConditionScreen = () => {
   }
 
   // Use 'results' for the rest of the component
-  const mockResults = results;
+  // Combine basic and detailed results for rendering
+  const displayResults = results;
 
   const getRiskColor = (level: string) => {
     switch (level.toLowerCase()) {
@@ -151,36 +176,36 @@ const ConditionScreen = () => {
               <div>
                 <CardTitle className="text-2xl flex items-center gap-2">
                   <Heart className="h-6 w-6 text-primary" />
-                  {mockResults.condition}
+                  {displayResults.condition}
                 </CardTitle>
                 <CardDescription className="text-lg mt-2">
-                  Gene: <strong>{mockResults.gene}</strong> | 
-                  Variant: <strong>{mockResults.variant}</strong>
+                  Gene: <strong>{displayResults.gene}</strong> | 
+                  Variant: <strong>{displayResults.variant}</strong>
                 </CardDescription>
               </div>
               <Badge 
                 variant="outline" 
-                className={`text-${getRiskColor(mockResults.riskLevel)} border-${getRiskColor(mockResults.riskLevel)} text-lg px-4 py-2`}
+                className={`text-${getRiskColor(displayResults.riskLevel)} border-${getRiskColor(displayResults.riskLevel)} text-lg px-4 py-2`}
               >
-                {mockResults.classification}
+                {displayResults.classification}
               </Badge>
             </div>
           </CardHeader>
           <CardContent>
             <p className="text-foreground mb-6 text-lg leading-relaxed">
-              {mockResults.description}
+              {displayResults.description}
             </p>
             
             <div className="space-y-4">
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-medium">Risk Level:</span>
-                  <Badge className={`bg-${getRiskColor(mockResults.riskLevel)}`}>
-                    {mockResults.riskLevel}
+                  <Badge className={`bg-${getRiskColor(displayResults.riskLevel)}`}>
+                    {displayResults.riskLevel}
                   </Badge>
                 </div>
                 <Progress 
-                  value={getRiskProgress(mockResults.riskLevel)} 
+                  value={getRiskProgress(displayResults.riskLevel)} 
                   className="h-3"
                 />
               </div>
@@ -198,14 +223,29 @@ const ConditionScreen = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ul className="space-y-3">
-                {mockResults.implications.map((implication, index) => (
-                  <li key={index} className="flex items-start gap-3">
-                    <Info className="h-5 w-5 text-primary mt-0.5 flex-shrink-0" />
-                    <span>{implication}</span>
-                  </li>
-                ))}
-              </ul>
+              {loadingDetailed ? (
+                // Loading skeleton
+                <div className="space-y-3">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <div className="h-5 w-5 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+                    </div>
+                  ))}
+                </div>
+              ) : detailedResults?.implications ? (
+                // Actual data
+                <ul className="space-y-3">
+                  {detailedResults.implications.map((implication: string, index: number) => (
+                    <li key={index} className="flex items-start gap-3">
+                      <Info className="h-5 w-5 text-primary mt-0.5 flex-shrink-0" />
+                      <span>{implication}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-muted-foreground">Unable to load health implications.</p>
+              )}
             </CardContent>
           </Card>
 
@@ -218,14 +258,29 @@ const ConditionScreen = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ul className="space-y-3">
-                {mockResults.recommendations.map((recommendation, index) => (
-                  <li key={index} className="flex items-start gap-3">
-                    <Shield className="h-5 w-5 text-medical-success mt-0.5 flex-shrink-0" />
-                    <span>{recommendation}</span>
-                  </li>
-                ))}
-              </ul>
+              {loadingDetailed ? (
+                // Loading skeleton
+                <div className="space-y-3">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <div className="h-5 w-5 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+                    </div>
+                  ))}
+                </div>
+              ) : detailedResults?.recommendations ? (
+                // Actual data
+                <ul className="space-y-3">
+                  {detailedResults.recommendations.map((recommendation: string, index: number) => (
+                    <li key={index} className="flex items-start gap-3">
+                      <Shield className="h-5 w-5 text-medical-success mt-0.5 flex-shrink-0" />
+                      <span>{recommendation}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-muted-foreground">Unable to load recommendations.</p>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -242,19 +297,31 @@ const ConditionScreen = () => {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {mockResults.resources.map((resource, index) => (
-                <Button 
-                  key={index}
-                  variant="outline" 
-                  className="justify-start h-auto p-4"
-                >
-                  <div className="text-left">
-                    <div className="font-medium">{resource}</div>
-                  </div>
-                </Button>
-              ))}
-            </div>
+            {loadingDetailed ? (
+              // Loading skeleton
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="h-16 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+                ))}
+              </div>
+            ) : detailedResults?.resources ? (
+              // Actual data
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {detailedResults.resources.map((resource: string, index: number) => (
+                  <Button 
+                    key={index}
+                    variant="outline" 
+                    className="justify-start h-auto p-4"
+                  >
+                    <div className="text-left">
+                      <div className="font-medium">{resource}</div>
+                    </div>
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-muted-foreground">Unable to load resources.</p>
+            )}
           </CardContent>
         </Card>
 

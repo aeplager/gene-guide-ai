@@ -16,6 +16,7 @@ import {
   PhoneOff
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { useWarmLLM } from "@/hooks/useWarmLLM";
 
 interface Message {
   id: string;
@@ -38,6 +39,9 @@ const QAScreen = () => {
   const { toast } = useToast();
 
   const backendBase = import.meta.env.DEV ? '' : (import.meta.env.VITE_TAVUS_BACKEND_URL || '');
+  
+  // Pre-warm the LLM when user enters this screen
+  useWarmLLM();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

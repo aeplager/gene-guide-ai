@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Upload, FileText, User, Users, Baby, Save } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { useWarmLLM } from "@/hooks/useWarmLLM";
 
 interface PersonaTestType {
   PersonaTestTypeID: number;
@@ -38,6 +39,9 @@ const IntroductoryScreen = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const backendBase = import.meta.env.DEV ? '' : (import.meta.env.VITE_TAVUS_BACKEND_URL || '');
+  
+  // Pre-warm the LLM when user enters this screen
+  useWarmLLM();
 
   // Fetch PersonaTestType options
   useEffect(() => {
@@ -84,6 +88,82 @@ const IntroductoryScreen = () => {
     };
     fetchClassificationTypes();
   }, [backendBase, toast]);
+
+  // Fetch existing BaseInformation to pre-populate the form
+  useEffect(() => {
+    const fetchExistingData = async () => {
+      const userId = localStorage.getItem('userId');
+      if (!userId) {
+        console.log('[intro] No userId found, skipping pre-population');
+        return;
+      }
+
+      try {
+        console.log('[intro] 📖 Fetching existing data for userId:', userId);
+        const resp = await fetch(`${backendBase}/base-information/${userId}`);
+        
+        if (resp.ok) {
+          const data = await resp.json();
+          console.log('[intro] Existing data fetched:', data);
+          
+          if (data.exists) {
+            // Pre-populate form fields
+            console.log('[intro] ✅ Pre-populating form with existing data');
+            
+            // Set PersonaTestType (radio button selection)
+            if (data.personaTestType) {
+              // Map the PersonaTestType string to the ID for the radio group
+              const matchingPersona = personaTestTypes.find(
+                pt => pt.PersonaTestType === data.personaTestType
+              );
+              if (matchingPersona) {
+                setRelationship(matchingPersona.PersonaTestTypeID.toString());
+                console.log('[intro] Set relationship to:', data.personaTestType);
+              }
+            }
+            
+            // Set gene and mutation
+            if (data.gene) {
+              setManualData(prev => ({ ...prev, gene: data.gene }));
+              console.log('[intro] Set gene to:', data.gene);
+            }
+            if (data.mutation) {
+              setManualData(prev => ({ ...prev, mutation: data.mutation }));
+              console.log('[intro] Set mutation to:', data.mutation);
+            }
+            
+            // Set ClassificationType dropdown
+            if (data.classificationTypeId) {
+              setSelectedClassificationId(data.classificationTypeId.toString());
+              setManualData(prev => ({ ...prev, status: data.classificationType }));
+              console.log('[intro] Set classification to:', data.classificationType);
+            }
+            
+            // Note: We're keeping the form in manual entry mode even if data was uploaded before
+            // If you want to show "yes" for hasReport, uncomment the line below:
+            // if (data.uploaded === true) setHasReport("yes");
+            
+            toast({
+              title: "Existing data loaded",
+              description: "Your previously saved information has been loaded."
+            });
+          } else {
+            console.log('[intro] ℹ️  No existing data found for this user');
+          }
+        } else {
+          console.warn('[intro] Failed to fetch existing data:', resp.status);
+        }
+      } catch (error) {
+        console.error('[intro] Error fetching existing data:', error);
+        // Non-fatal - user can still fill out the form
+      }
+    };
+
+    // Only fetch after personaTestTypes are loaded (needed for mapping)
+    if (personaTestTypes.length > 0) {
+      fetchExistingData();
+    }
+  }, [backendBase, toast, personaTestTypes]); // Depend on personaTestTypes being loaded
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
