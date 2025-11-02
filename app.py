@@ -404,6 +404,67 @@ def tavus_start(user_payload):
                         except json.JSONDecodeError:
                             pass
                     
+                    # If cache is empty, generate condition & description on-the-fly
+                    if not condition or not description:
+                        app.logger.info("🔄 Cache empty - generating condition & description for greeting...")
+                        
+                        # Build prompt for basic analysis
+                        basic_prompt = f"""You are a professional genetic counselor providing educational information about genetic test results. 
+
+Given the following genetic information:
+- Gene: {gene}
+- Variant/Mutation: {mutation}
+- Classification: {classification}
+
+Please provide a BRIEF initial analysis in the following JSON format:
+
+{{
+  "condition": "Primary condition name associated with this gene variant",
+  "riskLevel": "High/Moderate/Low",
+  "description": "A clear, patient-friendly 2-3 sentence description of what this variant means"
+}}
+
+CRITICAL: Respond ONLY with the JSON object, no additional text."""
+                        
+                        try:
+                            llm_response = call_custom_llm(
+                                user_message=basic_prompt,
+                                max_tokens=512,
+                                stream=False
+                            )
+                            
+                            if "choices" in llm_response and len(llm_response["choices"]) > 0:
+                                ai_content = llm_response["choices"][0].get("message", {}).get("content", "")
+                                
+                                # Parse JSON from LLM response
+                                cleaned_content = ai_content.strip()
+                                if cleaned_content.startswith("```json"):
+                                    cleaned_content = cleaned_content[7:]
+                                if cleaned_content.startswith("```"):
+                                    cleaned_content = cleaned_content[3:]
+                                if cleaned_content.endswith("```"):
+                                    cleaned_content = cleaned_content[:-3]
+                                cleaned_content = cleaned_content.strip()
+                                
+                                basic_data = json.loads(cleaned_content)
+                                condition = basic_data.get("condition")
+                                description = basic_data.get("description")
+                                
+                                # Cache the result for future use
+                                cache_json = json.dumps(basic_data)
+                                cur.execute('''
+                                    UPDATE "GenCom"."BaseInformation"
+                                    SET "CachedAnalysisBasic" = %s,
+                                        "AnalysisCachedAt" = (now() at time zone 'utc')
+                                    WHERE "UserID" = %s
+                                ''', (cache_json, jwt_user_id))
+                                conn.commit()
+                                
+                                app.logger.info(f"✅ Generated and cached basic analysis: condition={condition}")
+                        except Exception as llm_error:
+                            app.logger.error(f"❌ Failed to generate basic analysis: {llm_error}")
+                            # Continue without greeting rather than failing the whole request
+                    
                     # Build custom greeting for Tavus conversation
                     if condition and description:
                         custom_greeting = f"Hi I understand you're here to talk about the results of your genetic testing. From what I can gather you are talking about {condition}. {description}"
@@ -674,17 +735,22 @@ def save_base_information():
             app.logger.info("🔄 Converted uploaded %s -> bit value '%s'", uploaded, uploaded_bit)
             
             if exists:
-                # Update existing record
+                # Update existing record and clear cached analysis (will regenerate on next visit)
                 update_sql = '''UPDATE "GenCom"."BaseInformation"
                     SET "PersonaTestTypeID" = %s,
                         "ClassificationTypeID" = %s,
                         "Uploaded" = %s::bit(1),
                         "Gene" = %s,
                         "Mutation" = %s,
-                        "ModifiedDate" = %s
+                        "ModifiedDate" = %s,
+                        "CachedAnalysisBasic" = NULL,
+                        "CachedAnalysisDetailed" = NULL,
+                        "AnalysisCachedAt" = NULL
                     WHERE "UserID" = %s
                     RETURNING "UserID"'''
                 update_params = (persona_test_type_id, classification_type_id, uploaded_bit, gene, mutation, now, user_id)
+                
+                app.logger.info("🗑️  Clearing cached analysis - genetic data changed")
                 
                 app.logger.info("=" * 80)
                 app.logger.info("🔄 EXECUTING UPDATE")
@@ -704,13 +770,14 @@ def save_base_information():
                 cur.execute(update_sql, update_params)
                 app.logger.info("✅ base_information:updated user_id=%s gene=%s uploaded=%s", user_id, gene, uploaded_bit)
             else:
-                # Insert new record
+                # Insert new record (cache fields will be NULL, analysis will generate on first visit)
                 insert_sql = '''INSERT INTO "GenCom"."BaseInformation"
                     ("UserID", "PersonaTestTypeID", "ClassificationTypeID", "Uploaded", "Gene", "Mutation", "InsertDate", "ModifiedDate")
                     VALUES (%s, %s, %s, %s::bit(1), %s, %s, %s, %s)
                     RETURNING "UserID"'''
                 insert_params = (user_id, persona_test_type_id, classification_type_id, uploaded_bit, gene, mutation, now, now)
                 
+                app.logger.info("ℹ️  Cache will be generated on first visit to /conditions page")
                 app.logger.info("=" * 80)
                 app.logger.info("➕ EXECUTING INSERT")
                 app.logger.info("=" * 80)
@@ -732,6 +799,91 @@ def save_base_information():
             
             conn.commit()
             result = cur.fetchone()
+            
+            # Fetch classification type name for the background job
+            cur.execute('''
+                SELECT "ClassificationType"
+                FROM "GenCom"."ClassificationType"
+                WHERE "ClassificationTypeID" = %s
+            ''', (classification_type_id,))
+            classification_row = cur.fetchone()
+            classification_name = classification_row["ClassificationType"] if classification_row else "Unknown"
+            
+            # Trigger async background job to pre-generate basic analysis
+            # This way, by the time user navigates to /conditions, cache is ready!
+            # Capture variables in the closure
+            saved_gene = gene
+            saved_mutation = mutation
+            saved_classification = classification_name
+            saved_user_id = user_id
+            
+            def async_generate_basic_analysis():
+                try:
+                    app.logger.info(f"🔄 Background: Starting basic analysis generation for user {saved_user_id}")
+                    
+                    # Build prompt for basic analysis
+                    basic_prompt = f"""You are a professional genetic counselor providing educational information about genetic test results. 
+
+Given the following genetic information:
+- Gene: {saved_gene}
+- Variant/Mutation: {saved_mutation}
+- Classification: {saved_classification}
+
+Please provide a BRIEF initial analysis in the following JSON format:
+
+{{
+  "condition": "Primary condition name associated with this gene variant",
+  "riskLevel": "High/Moderate/Low",
+  "description": "A clear, patient-friendly 2-3 sentence description of what this variant means"
+}}
+
+CRITICAL: Respond ONLY with the JSON object, no additional text."""
+                    
+                    llm_response = call_custom_llm(
+                        user_message=basic_prompt,
+                        max_tokens=512,
+                        stream=False
+                    )
+                    
+                    if "choices" in llm_response and len(llm_response["choices"]) > 0:
+                        ai_content = llm_response["choices"][0].get("message", {}).get("content", "")
+                        
+                        # Parse JSON from LLM response
+                        cleaned_content = ai_content.strip()
+                        if cleaned_content.startswith("```json"):
+                            cleaned_content = cleaned_content[7:]
+                        if cleaned_content.startswith("```"):
+                            cleaned_content = cleaned_content[3:]
+                        if cleaned_content.endswith("```"):
+                            cleaned_content = cleaned_content[:-3]
+                        cleaned_content = cleaned_content.strip()
+                        
+                        basic_data = json.loads(cleaned_content)
+                        
+                        # Cache the result
+                        cache_json = json.dumps(basic_data)
+                        bg_conn = db_pool.getconn()
+                        try:
+                            with bg_conn.cursor() as bg_cur:
+                                bg_cur.execute('''
+                                    UPDATE "GenCom"."BaseInformation"
+                                    SET "CachedAnalysisBasic" = %s,
+                                        "AnalysisCachedAt" = (now() at time zone 'utc')
+                                    WHERE "UserID" = %s
+                                ''', (cache_json, saved_user_id))
+                                bg_conn.commit()
+                            
+                            app.logger.info(f"✅ Background: Cached basic analysis for user {saved_user_id}: condition={basic_data.get('condition')}")
+                        finally:
+                            db_pool.putconn(bg_conn)
+                except Exception as bg_error:
+                    app.logger.error(f"❌ Background: Failed to generate basic analysis: {bg_error}")
+            
+            # Start background thread (non-blocking)
+            analysis_thread = threading.Thread(target=async_generate_basic_analysis, daemon=True)
+            analysis_thread.start()
+            app.logger.info("🚀 Triggered background analysis generation")
+            
             return jsonify({"success": True, "userId": result["UserID"]}), 200
             
     except Exception as e:
