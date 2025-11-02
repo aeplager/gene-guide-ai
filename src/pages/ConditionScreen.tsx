@@ -285,6 +285,27 @@ const ConditionScreen = () => {
           </Card>
         </div>
 
+        {/* Action Buttons - Moved above Educational Resources */}
+        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center py-8">
+          <Button 
+            onClick={() => navigate("/qa")}
+            size="lg"
+            className="bg-gradient-primary px-8"
+          >
+            <MessageCircle className="h-5 w-5 mr-2" />
+            Ask Questions & Get Support
+          </Button>
+          
+          <Button 
+            variant="outline"
+            size="lg"
+            className="px-8"
+          >
+            <Users className="h-5 w-5 mr-2" />
+            Share with Family
+          </Button>
+        </div>
+
         {/* Educational Resources */}
         <Card className="shadow-card">
           <CardHeader>
@@ -324,27 +345,6 @@ const ConditionScreen = () => {
             )}
           </CardContent>
         </Card>
-
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center py-8">
-          <Button 
-            onClick={() => navigate("/qa")}
-            size="lg"
-            className="bg-gradient-primary px-8"
-          >
-            <MessageCircle className="h-5 w-5 mr-2" />
-            Ask Questions & Get Support
-          </Button>
-          
-          <Button 
-            variant="outline"
-            size="lg"
-            className="px-8"
-          >
-            <Users className="h-5 w-5 mr-2" />
-            Share with Family
-          </Button>
-        </div>
 
         {/* Medical Disclaimer */}
         <Card className="bg-secondary border-l-4 border-primary">

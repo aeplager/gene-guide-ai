@@ -50,26 +50,23 @@ const LoginScreen = () => {
             console.log('[login] JWT token stored');
           }
           
-          // Pre-warm the custom LLM after successful login
-          console.log('[login] 🔥 Pre-warming custom LLM...');
-          const warmupStart = performance.now();
-          try {
-            const warmupResp = await fetch(`${backendBase}/healthz`, {
-              method: 'GET',
-              signal: AbortSignal.timeout(15000),
-            });
-            const warmupDuration = ((performance.now() - warmupStart) / 1000).toFixed(2);
-            if (warmupResp.ok) {
-              console.log(`[login] ✅ LLM warmed up successfully (${warmupDuration}s)`);
+          // Pre-warm the custom LLM in background (fire-and-forget, non-blocking)
+          console.log('[login] 🔥 Pre-warming custom LLM (background)...');
+          fetch(`${backendBase}/healthz`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(15000),
+          }).then(resp => {
+            if (resp.ok) {
+              console.log(`[login] ✅ LLM warmed up successfully`);
             } else {
-              console.warn(`[login] ⚠️ LLM pre-warm failed (${warmupDuration}s): Status ${warmupResp.status}`);
+              console.warn(`[login] ⚠️ LLM pre-warm failed: Status ${resp.status}`);
             }
-          } catch (warmupErr) {
-            const message = warmupErr instanceof Error ? warmupErr.message : String(warmupErr);
+          }).catch(err => {
+            const message = err instanceof Error ? err.message : String(err);
             console.error(`[login] ❌ LLM pre-warm error: ${message}`);
-            // Non-fatal - continue to app even if warmup fails
-          }
+          });
           
+          // Navigate immediately (don't wait for warmup)
           navigate("/introduction");
         } else {
           const errorData = await response.json();

@@ -111,15 +111,10 @@ const IntroductoryScreen = () => {
             console.log('[intro] ✅ Pre-populating form with existing data');
             
             // Set PersonaTestType (radio button selection)
-            if (data.personaTestType) {
-              // Map the PersonaTestType string to the ID for the radio group
-              const matchingPersona = personaTestTypes.find(
-                pt => pt.PersonaTestType === data.personaTestType
-              );
-              if (matchingPersona) {
-                setRelationship(matchingPersona.PersonaTestTypeID.toString());
-                console.log('[intro] Set relationship to:', data.personaTestType);
-              }
+            if (data.personaTestTypeId) {
+              // Set the radio button using the PersonaTestTypeID
+              setRelationship(data.personaTestTypeId.toString());
+              console.log('[intro] Set relationship to ID:', data.personaTestTypeId, 'Type:', data.personaTestType);
             }
             
             // Set gene and mutation
@@ -210,19 +205,23 @@ const IntroductoryScreen = () => {
       return;
     }
 
-    // Map relationship to PersonaTestTypeID
+    // Map relationship (which is now PersonaTestTypeID) to the actual PersonaTestType object
     const personaTestType = personaTestTypes.find(
-      p => p.PersonaTestType.toLowerCase().includes(relationship.toLowerCase())
+      p => p.PersonaTestTypeID.toString() === relationship
     );
 
     if (!personaTestType) {
       toast({
         title: "Invalid relationship selection",
-        description: "Could not map relationship to database.",
+        description: "Could not map relationship to database. Please select a valid option.",
         variant: "destructive"
       });
+      console.error('[intro] Could not find PersonaTestType for relationship ID:', relationship);
+      console.error('[intro] Available PersonaTestTypes:', personaTestTypes);
       return;
     }
+    
+    console.log('[intro] ✅ Mapped relationship ID', relationship, 'to PersonaTestType:', personaTestType.PersonaTestType);
 
     if (!selectedClassificationId) {
       toast({
@@ -340,14 +339,31 @@ const IntroductoryScreen = () => {
     navigate("/conditions");
   };
 
-  const relationshipOptions = [
-    { value: "self", label: "Myself", icon: User },
-    { value: "child", label: "My Child", icon: Baby },
-    { value: "parent", label: "My Parent", icon: Users },
-    { value: "sibling", label: "My Sibling", icon: Users },
-    { value: "partner", label: "My Partner", icon: Users },
-    { value: "other", label: "Other Family Member", icon: Users }
-  ];
+  // Map PersonaTestType labels to icons
+  const getIconForPersonaType = (label: string) => {
+    if (label.toLowerCase().includes('myself')) return User;
+    if (label.toLowerCase().includes('child')) return Baby;
+    return Users;
+  };
+
+  // Build relationship options from database PersonaTestTypes when available
+  // Falls back to static options if database hasn't loaded yet
+  const relationshipOptions = personaTestTypes.length > 0 
+    ? personaTestTypes.map(pt => ({
+        value: pt.PersonaTestTypeID.toString(),
+        label: pt.PersonaTestType,
+        icon: getIconForPersonaType(pt.PersonaTestType)
+      }))
+    : [
+        // Fallback static options (will be replaced by database values once loaded)
+        // Note: These IDs may not match database - they're just placeholders
+        { value: "1", label: "Myself", icon: User },
+        { value: "2", label: "My Child", icon: Baby },
+        { value: "3", label: "My Parent", icon: Users },
+        { value: "4", label: "My Sibling", icon: Users },
+        { value: "5", label: "My Partner", icon: Users },
+        { value: "6", label: "Other Family Member", icon: Users }
+      ];
 
   return (
     <div className="min-h-screen bg-gradient-bg p-4">

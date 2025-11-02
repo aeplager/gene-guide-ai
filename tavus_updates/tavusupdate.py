@@ -1,9 +1,18 @@
 import requests
 import json
 import os
+from dotenv import load_dotenv
 
-# Replace with your Tavus API key
-TAVUS_API_KEY = "3dc79158e03542589ea23329f0f0f4c5"
+# Load environment variables from .env in the base directory
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+env_path = os.path.join(base_dir, '.env')
+load_dotenv(env_path)
+
+# Get Tavus API key from environment variables
+TAVUS_API_KEY = os.getenv('TAVUS_API_KEY')
+if not TAVUS_API_KEY:
+    raise ValueError("TAVUS_API_KEY not found in .env file. Please add it to your .env file.")
+
 API_KEY = TAVUS_API_KEY
 BASE_URL = 'https://tavusapi.com/v2'
 

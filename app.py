@@ -357,6 +357,7 @@ def tavus_start(user_payload):
 
     # Fetch user's genetic information from database to provide context to AI counselor
     genetic_context = None
+    custom_greeting = None
     if jwt_user_id and db_pool:
         conn = None
         try:
@@ -391,6 +392,13 @@ def tavus_start(user_payload):
                             description = cached.get("description")
                         except json.JSONDecodeError:
                             pass
+                    
+                    # Build custom greeting for Tavus conversation
+                    if condition and description:
+                        custom_greeting = f"Hi I understand you're here to talk about the results of your genetic testing. From what I can gather you are talking about {condition}. {description}"
+                        app.logger.info(f"👋 Custom greeting created for condition: {condition}")
+                    else:
+                        app.logger.info("⚠️  Skipping custom greeting - condition or description not available")
                     
                     # Build context string for Tavus AI counselor
                     genetic_context = f"""Patient Genetic Information:
@@ -430,6 +438,11 @@ Please use this information to provide personalized genetic counseling to the pa
     if genetic_context:
         body["conversational_context"] = genetic_context
         app.logger.info("🧬 Added genetic context to Tavus conversation")
+    
+    # Add custom greeting if available (personalized opening message)
+    if custom_greeting:
+        body["custom_greeting"] = custom_greeting
+        app.logger.info(f"👋 Added custom greeting to Tavus conversation: {custom_greeting[:50]}...")
     
     # Only include callback_url if it's a valid public URL (not localhost)
     if TAVUS_CALLBACK_URL and TAVUS_CALLBACK_URL.startswith("https://"):
