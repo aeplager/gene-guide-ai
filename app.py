@@ -5,7 +5,7 @@ from flask_cors import CORS
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import json
 import jwt
@@ -115,8 +115,8 @@ def create_jwt_token(user_id: str, email: str, company_id: str = None) -> str:
         "sub": user_id,
         "email": email,
         "company_id": company_id,
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXP_HOURS),
-        "iat": datetime.utcnow()
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXP_HOURS),
+        "iat": datetime.now(timezone.utc)
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
@@ -256,11 +256,11 @@ def prewarm_custom_llm():
     try:
         healthz_url = f"{CUSTOM_LLM_BASE_URL}/healthz"
         app.logger.info(f"🔥 custom_llm:prewarm:start url={healthz_url}")
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         resp = requests.get(healthz_url, timeout=20, verify=True)
         
-        duration = (datetime.utcnow() - start_time).total_seconds()
+        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         app.logger.info(f"✅ custom_llm:prewarm:success status={resp.status_code} duration={duration:.2f}s")
         
         return {
@@ -304,6 +304,30 @@ def resolve_system_user_id(email: str):
 # ENDPOINTS
 # ============================================================================
 
+@app.get("/healthz")
+def healthz():
+    """
+    Health check endpoint that also warms up the custom LLM
+    Called by frontend on page load to reduce cold-start latency
+    """
+    app.logger.info("🏥 healthz:request")
+    
+    # Always return backend healthy
+    response = {
+        "status": "healthy",
+        "backend": "ok"
+    }
+    
+    # Optionally warm up custom LLM if enabled
+    if TAVUS_CUSTOM_LLM_ENABLE and CUSTOM_LLM_BASE_URL:
+        prewarm_result = prewarm_custom_llm()
+        response["llm_warmup"] = prewarm_result
+    else:
+        response["llm_warmup"] = {"skipped": True, "reason": "not_enabled"}
+    
+    app.logger.info(f"✅ healthz:response {response}")
+    return jsonify(response), 200
+
 @app.get("/tavus/start")
 @jwt_required(optional=True)
 def tavus_start(user_payload):
@@ -327,9 +351,65 @@ def tavus_start(user_payload):
     else:
         app.logger.info("📧 tavus:start:unauthenticated (optional JWT not provided)")
     
-    # Pre-warm custom LLM if enabled
-    prewarm_result = prewarm_custom_llm()
-    debug_info['prewarm'] = prewarm_result
+    # Note: LLM pre-warming is handled by frontend on page load (QAScreen.tsx)
+    # No need to block here - frontend already warmed up via /healthz
+    app.logger.info("⏭️  Skipping backend LLM pre-warm (frontend already handles this)")
+
+    # Fetch user's genetic information from database to provide context to AI counselor
+    genetic_context = None
+    if jwt_user_id and db_pool:
+        conn = None
+        try:
+            conn = db_pool.getconn()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Fetch base information and analysis
+                cur.execute('''
+                    SELECT 
+                        bi."Gene",
+                        bi."Mutation",
+                        ct."ClassificationType",
+                        bi."CachedAnalysisBasic"
+                    FROM "GenCom"."BaseInformation" bi
+                    LEFT JOIN "GenCom"."ClassificationType" ct 
+                        ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
+                    WHERE bi."UserID" = %s
+                ''', (jwt_user_id,))
+                
+                result = cur.fetchone()
+                if result:
+                    gene = result.get("Gene", "").strip()
+                    mutation = result.get("Mutation", "").strip()
+                    classification = result.get("ClassificationType", "").strip()
+                    
+                    # Parse cached analysis for condition and description
+                    condition = None
+                    description = None
+                    if result.get("CachedAnalysisBasic"):
+                        try:
+                            cached = json.loads(result["CachedAnalysisBasic"])
+                            condition = cached.get("condition")
+                            description = cached.get("description")
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    # Build context string for Tavus AI counselor
+                    genetic_context = f"""Patient Genetic Information:
+- Gene: {gene}
+- Variant/Mutation: {mutation}
+- Classification: {classification}
+- Condition: {condition or 'Pending analysis'}
+- Description: {description or 'Analysis in progress'}
+
+Please use this information to provide personalized genetic counseling to the patient."""
+                    
+                    app.logger.info(f"🧬 Genetic context loaded for user {jwt_user_id}: gene={gene}, mutation={mutation}")
+                else:
+                    app.logger.warning(f"⚠️  No genetic data found for user {jwt_user_id}")
+        except Exception as e:
+            app.logger.error(f"❌ Error fetching genetic context: {e}")
+        finally:
+            if conn:
+                db_pool.putconn(conn)
 
     # Build Tavus API request
     # Sanitize email for Tavus conversation name (remove special characters)
@@ -345,6 +425,11 @@ def tavus_start(user_payload):
         "persona_id": TAVUS_PERSONA_ID,
         "properties": {"enable_closed_captions": False, "enable_recording": False},
     }
+    
+    # Add genetic context if available (provides personalized patient info to AI counselor)
+    if genetic_context:
+        body["conversational_context"] = genetic_context
+        app.logger.info("🧬 Added genetic context to Tavus conversation")
     
     # Only include callback_url if it's a valid public URL (not localhost)
     if TAVUS_CALLBACK_URL and TAVUS_CALLBACK_URL.startswith("https://"):
@@ -834,7 +919,7 @@ def get_condition_analysis_basic(user_id):
                 # Check if cache is still valid (less than 7 days old)
                 cache_valid = False
                 if cached_at:
-                    cache_age = datetime.utcnow() - cached_at
+                    cache_age = datetime.now(timezone.utc) - cached_at
                     cache_valid = cache_age < timedelta(days=7)
                     app.logger.info(f"📦 Found cached basic analysis (age: {cache_age.days} days)")
                 
@@ -1194,7 +1279,7 @@ def get_condition_analysis(user_id):
                 # Check if cache is still valid (less than 7 days old)
                 cache_valid = False
                 if cached_at:
-                    cache_age = datetime.utcnow() - cached_at
+                    cache_age = datetime.now(timezone.utc) - cached_at
                     cache_valid = cache_age < timedelta(days=7)
                     app.logger.info(f"📦 Found cached analysis (age: {cache_age.days} days)")
                 

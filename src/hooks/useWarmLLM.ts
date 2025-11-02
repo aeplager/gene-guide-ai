@@ -16,10 +16,12 @@ export const useWarmLLM = () => {
           return;
         }
 
-        const LLM_URL = 'https://custom-llm-gc.ashydune-c5455a7b.centralus.azurecontainerapps.io/healthz';
+        // Use backend proxy for LLM warmup (avoids CORS issues)
+        const backendBase = import.meta.env.DEV ? '' : (import.meta.env.VITE_TAVUS_BACKEND_URL || '');
+        const LLM_URL = `${backendBase}/healthz`;
         const startTime = performance.now();
         
-        console.log('[warmup] 🔥 Pre-warming custom LLM...');
+        console.log('[warmup] 🔥 Pre-warming custom LLM via backend...');
         
         const response = await fetch(LLM_URL, {
           method: 'GET',

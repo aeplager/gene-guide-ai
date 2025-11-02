@@ -19,6 +19,10 @@ dist-ssr
 .env.*.local
 .env.backup
 .venv/
+
+# Cursor AI configuration (contains secrets)
+.cursor/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
