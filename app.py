@@ -10,6 +10,7 @@ import uuid
 import json
 import jwt
 from functools import wraps
+import threading
 
 app = Flask(__name__)
 
@@ -309,23 +310,33 @@ def healthz():
     """
     Health check endpoint that also warms up the custom LLM
     Called by frontend on page load to reduce cold-start latency
+    Returns immediately - warmup happens asynchronously
     """
     app.logger.info("🏥 healthz:request")
     
-    # Always return backend healthy
+    # Always return backend healthy immediately
     response = {
         "status": "healthy",
-        "backend": "ok"
+        "backend": "ok",
+        "llm_warmup": {"status": "initiated", "note": "warmup running in background"}
     }
     
-    # Optionally warm up custom LLM if enabled
+    # Trigger LLM warmup in background thread (non-blocking)
     if TAVUS_CUSTOM_LLM_ENABLE and CUSTOM_LLM_BASE_URL:
-        prewarm_result = prewarm_custom_llm()
-        response["llm_warmup"] = prewarm_result
+        def async_warmup():
+            try:
+                prewarm_result = prewarm_custom_llm()
+                app.logger.info(f"🔥 Background LLM warmup completed: {prewarm_result}")
+            except Exception as e:
+                app.logger.error(f"❌ Background LLM warmup failed: {e}")
+        
+        warmup_thread = threading.Thread(target=async_warmup, daemon=True)
+        warmup_thread.start()
+        app.logger.info("🔥 LLM warmup started in background thread")
     else:
         response["llm_warmup"] = {"skipped": True, "reason": "not_enabled"}
     
-    app.logger.info(f"✅ healthz:response {response}")
+    app.logger.info(f"✅ healthz:response (instant) {response}")
     return jsonify(response), 200
 
 @app.get("/tavus/start")

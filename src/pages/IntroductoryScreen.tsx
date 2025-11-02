@@ -178,6 +178,17 @@ const IntroductoryScreen = () => {
   };
 
   const handleSave = async () => {
+    // Check if PersonaTestTypes have loaded from database
+    if (personaTestTypes.length === 0) {
+      toast({
+        title: "Please wait",
+        description: "Loading relationship options from database...",
+        variant: "destructive"
+      });
+      console.error('[intro] PersonaTestTypes not loaded yet');
+      return;
+    }
+
     if (!relationship) {
       toast({
         title: "Please select relationship",
@@ -206,6 +217,9 @@ const IntroductoryScreen = () => {
     }
 
     // Map relationship (which is now PersonaTestTypeID) to the actual PersonaTestType object
+    console.log('[intro] Looking up PersonaTestType for relationship ID:', relationship);
+    console.log('[intro] Available PersonaTestTypes:', personaTestTypes);
+    
     const personaTestType = personaTestTypes.find(
       p => p.PersonaTestTypeID.toString() === relationship
     );
@@ -213,11 +227,11 @@ const IntroductoryScreen = () => {
     if (!personaTestType) {
       toast({
         title: "Invalid relationship selection",
-        description: "Could not map relationship to database. Please select a valid option.",
+        description: `Could not find relationship ID "${relationship}" in database. Please re-select a valid option.`,
         variant: "destructive"
       });
-      console.error('[intro] Could not find PersonaTestType for relationship ID:', relationship);
-      console.error('[intro] Available PersonaTestTypes:', personaTestTypes);
+      console.error('[intro] ❌ Could not find PersonaTestType for relationship ID:', relationship);
+      console.error('[intro] Available IDs:', personaTestTypes.map(pt => pt.PersonaTestTypeID));
       return;
     }
     
