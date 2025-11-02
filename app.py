@@ -817,11 +817,11 @@ def save_base_information():
             saved_classification = classification_name
             saved_user_id = user_id
             
-            def async_generate_basic_analysis():
+            def async_generate_full_analysis():
                 try:
-                    app.logger.info(f"🔄 Background: Starting basic analysis generation for user {saved_user_id}")
+                    app.logger.info(f"🔄 Background: Starting FULL analysis generation for user {saved_user_id}")
                     
-                    # Build prompt for basic analysis
+                    # STEP 1: Generate BASIC analysis (condition, risk, description)
                     basic_prompt = f"""You are a professional genetic counselor providing educational information about genetic test results. 
 
 Given the following genetic information:
@@ -845,6 +845,7 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         stream=False
                     )
                     
+                    basic_data = None
                     if "choices" in llm_response and len(llm_response["choices"]) > 0:
                         ai_content = llm_response["choices"][0].get("message", {}).get("content", "")
                         
@@ -860,8 +861,8 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         
                         basic_data = json.loads(cleaned_content)
                         
-                        # Cache the result
-                        cache_json = json.dumps(basic_data)
+                        # Cache basic result
+                        basic_json = json.dumps(basic_data)
                         bg_conn = db_pool.getconn()
                         try:
                             with bg_conn.cursor() as bg_cur:
@@ -870,19 +871,93 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                                     SET "CachedAnalysisBasic" = %s,
                                         "AnalysisCachedAt" = (now() at time zone 'utc')
                                     WHERE "UserID" = %s
-                                ''', (cache_json, saved_user_id))
+                                ''', (basic_json, saved_user_id))
                                 bg_conn.commit()
                             
                             app.logger.info(f"✅ Background: Cached basic analysis for user {saved_user_id}: condition={basic_data.get('condition')}")
                         finally:
                             db_pool.putconn(bg_conn)
+                    
+                    # STEP 2: Generate DETAILED analysis (implications, recommendations, resources)
+                    app.logger.info(f"🔄 Background: Starting detailed analysis generation for user {saved_user_id}")
+                    
+                    detailed_prompt = f"""You are a professional genetic counselor providing educational information about genetic test results. 
+
+Given the following genetic information:
+- Gene: {saved_gene}
+- Variant/Mutation: {saved_mutation}
+- Classification: {saved_classification}
+
+Please provide DETAILED guidance in the following JSON format:
+
+{{
+  "implications": [
+    "First health implication",
+    "Second health implication",
+    "Third health implication",
+    "Fourth health implication"
+  ],
+  "recommendations": [
+    "First recommended action",
+    "Second recommended action",
+    "Third recommended action",
+    "Fourth recommended action"
+  ],
+  "resources": [
+    "First educational resource name",
+    "Second educational resource name",
+    "Third educational resource name",
+    "Fourth educational resource name"
+  ]
+}}
+
+CRITICAL: Respond ONLY with the JSON object, no additional text."""
+                    
+                    llm_response_detailed = call_custom_llm(
+                        user_message=detailed_prompt,
+                        max_tokens=1024,
+                        stream=False
+                    )
+                    
+                    if "choices" in llm_response_detailed and len(llm_response_detailed["choices"]) > 0:
+                        ai_content_detailed = llm_response_detailed["choices"][0].get("message", {}).get("content", "")
+                        
+                        # Parse JSON from LLM response
+                        cleaned_detailed = ai_content_detailed.strip()
+                        if cleaned_detailed.startswith("```json"):
+                            cleaned_detailed = cleaned_detailed[7:]
+                        if cleaned_detailed.startswith("```"):
+                            cleaned_detailed = cleaned_detailed[3:]
+                        if cleaned_detailed.endswith("```"):
+                            cleaned_detailed = cleaned_detailed[:-3]
+                        cleaned_detailed = cleaned_detailed.strip()
+                        
+                        detailed_data = json.loads(cleaned_detailed)
+                        
+                        # Cache detailed result
+                        detailed_json = json.dumps(detailed_data)
+                        bg_conn_detailed = db_pool.getconn()
+                        try:
+                            with bg_conn_detailed.cursor() as bg_cur_detailed:
+                                bg_cur_detailed.execute('''
+                                    UPDATE "GenCom"."BaseInformation"
+                                    SET "CachedAnalysisDetailed" = %s
+                                    WHERE "UserID" = %s
+                                ''', (detailed_json, saved_user_id))
+                                bg_conn_detailed.commit()
+                            
+                            app.logger.info(f"✅ Background: Cached detailed analysis for user {saved_user_id}")
+                            app.logger.info(f"🎉 Background: FULL analysis complete for user {saved_user_id} - /conditions will be instant!")
+                        finally:
+                            db_pool.putconn(bg_conn_detailed)
+                    
                 except Exception as bg_error:
-                    app.logger.error(f"❌ Background: Failed to generate basic analysis: {bg_error}")
+                    app.logger.error(f"❌ Background: Failed to generate analysis: {bg_error}")
             
             # Start background thread (non-blocking)
-            analysis_thread = threading.Thread(target=async_generate_basic_analysis, daemon=True)
+            analysis_thread = threading.Thread(target=async_generate_full_analysis, daemon=True)
             analysis_thread.start()
-            app.logger.info("🚀 Triggered background analysis generation")
+            app.logger.info("🚀 Triggered background FULL analysis generation (basic + detailed)")
             
             return jsonify({"success": True, "userId": result["UserID"]}), 200
             
