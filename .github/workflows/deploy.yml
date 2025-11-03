@@ -95,6 +95,10 @@ jobs:
                   TAVUS_REPLICA_ID="${{ secrets.TAVUS_REPLICA_ID }}" \
                   TAVUS_PERSONA_ID="${{ secrets.TAVUS_PERSONA_ID }}" \
                   TAVUS_CALLBACK_URL="https://$BACKEND_FQDN/tavus/callback" \
+                  TAVUS_ENABLE_RECORDING="${{ secrets.TAVUS_ENABLE_RECORDING }}" \
+                  TAVUS_RECORDING_S3_BUCKET_NAME="${{ secrets.TAVUS_RECORDING_S3_BUCKET_NAME }}" \
+                  TAVUS_RECORDING_S3_BUCKET_REGION="${{ secrets.TAVUS_RECORDING_S3_BUCKET_REGION }}" \
+                  TAVUS_AWS_ASSUME_ROLE_ARN="${{ secrets.TAVUS_AWS_ASSUME_ROLE_ARN }}" \
                   DB_CONNECTION_STRING="${{ secrets.DB_CONNECTION_STRING }}" \
                   COMPANY_ID="${{ secrets.COMPANY_ID }}" \
                   JWT_SECRET="${{ secrets.JWT_SECRET }}" \

@@ -30,6 +30,12 @@ TAVUS_CALLBACK_URL = os.getenv("TAVUS_CALLBACK_URL", "")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 TAVUS_BASE = "https://tavusapi.com/v2"
 
+# Tavus Recording Configuration (optional)
+TAVUS_ENABLE_RECORDING = os.getenv("TAVUS_ENABLE_RECORDING", "false").lower() == "true"
+TAVUS_RECORDING_S3_BUCKET_NAME = os.getenv("TAVUS_RECORDING_S3_BUCKET_NAME")
+TAVUS_RECORDING_S3_BUCKET_REGION = os.getenv("TAVUS_RECORDING_S3_BUCKET_REGION")
+TAVUS_AWS_ASSUME_ROLE_ARN = os.getenv("TAVUS_AWS_ASSUME_ROLE_ARN")
+
 # Database Configuration
 DB_CONNECTION_STRING = os.getenv("DB_CONNECTION_STRING")
 # Strip SQLAlchemy-style prefix if present (e.g., postgresql+psycopg2://)
@@ -57,6 +63,11 @@ app.logger.info("=" * 60)
 app.logger.info(f"TAVUS_API_KEY: {'SET' if TAVUS_API_KEY else 'NOT SET'}")
 app.logger.info(f"TAVUS_REPLICA_ID: {TAVUS_REPLICA_ID or 'NOT SET'}")
 app.logger.info(f"TAVUS_PERSONA_ID: {TAVUS_PERSONA_ID or 'NOT SET'}")
+app.logger.info(f"TAVUS_ENABLE_RECORDING: {TAVUS_ENABLE_RECORDING}")
+if TAVUS_ENABLE_RECORDING:
+    app.logger.info(f"TAVUS_RECORDING_S3_BUCKET_NAME: {TAVUS_RECORDING_S3_BUCKET_NAME or 'NOT SET'}")
+    app.logger.info(f"TAVUS_RECORDING_S3_BUCKET_REGION: {TAVUS_RECORDING_S3_BUCKET_REGION or 'NOT SET'}")
+    app.logger.info(f"TAVUS_AWS_ASSUME_ROLE_ARN: {'SET' if TAVUS_AWS_ASSUME_ROLE_ARN else 'NOT SET'}")
 app.logger.info(f"CORS_ORIGINS: {CORS_ORIGINS}")
 app.logger.info(f"COMPANY_ID: {COMPANY_ID}")
 app.logger.info(f"CUSTOM_LLM_BASE_URL: {CUSTOM_LLM_BASE_URL or 'NOT SET'}")
@@ -499,11 +510,30 @@ Please use this information to provide personalized genetic counseling to the pa
     else:
         conversation_name = "Conversation - Guest"
     
+    # Build properties with conditional recording configuration
+    properties = {
+        "enable_closed_captions": False,
+        "enable_recording": TAVUS_ENABLE_RECORDING
+    }
+    
+    # Add S3 recording config if recording is enabled
+    if TAVUS_ENABLE_RECORDING:
+        if TAVUS_RECORDING_S3_BUCKET_NAME:
+            properties["recording_s3_bucket_name"] = TAVUS_RECORDING_S3_BUCKET_NAME
+        if TAVUS_RECORDING_S3_BUCKET_REGION:
+            properties["recording_s3_bucket_region"] = TAVUS_RECORDING_S3_BUCKET_REGION
+        if TAVUS_AWS_ASSUME_ROLE_ARN:
+            properties["aws_assume_role_arn"] = TAVUS_AWS_ASSUME_ROLE_ARN
+        
+        app.logger.info(f"📹 Recording enabled with S3 bucket: {TAVUS_RECORDING_S3_BUCKET_NAME}")
+    else:
+        app.logger.info("📹 Recording disabled")
+    
     body = {
         "replica_id": TAVUS_REPLICA_ID,
         "conversation_name": conversation_name,
         "persona_id": TAVUS_PERSONA_ID,
-        "properties": {"enable_closed_captions": False, "enable_recording": False},
+        "properties": properties,
     }
     
     # Add genetic context if available (provides personalized patient info to AI counselor)
@@ -520,8 +550,32 @@ Please use this information to provide personalized genetic counseling to the pa
     if TAVUS_CALLBACK_URL and TAVUS_CALLBACK_URL.startswith("https://"):
         body["callback_url"] = TAVUS_CALLBACK_URL
     
+    # Log the complete Tavus API request payload for verification
+    app.logger.info("=" * 80)
+    app.logger.info("📤 TAVUS API REQUEST PAYLOAD")
+    app.logger.info("=" * 80)
+    app.logger.info("URL: %s", f"{TAVUS_BASE}/conversations")
+    app.logger.info("replica_id: %s", body.get("replica_id"))
+    app.logger.info("persona_id: %s", body.get("persona_id"))
+    app.logger.info("conversation_name: %s", body.get("conversation_name"))
+    app.logger.info("callback_url: %s", body.get("callback_url", "NOT SET"))
+    app.logger.info("-" * 80)
+    app.logger.info("📹 PROPERTIES (Recording Configuration):")
+    for key, value in body.get("properties", {}).items():
+        app.logger.info("  %s: %s", key, value)
+    app.logger.info("-" * 80)
+    if "conversational_context" in body:
+        context_preview = body["conversational_context"][:100] + "..." if len(body["conversational_context"]) > 100 else body["conversational_context"]
+        app.logger.info("conversational_context: %s", context_preview)
+    if "custom_greeting" in body:
+        greeting_preview = body["custom_greeting"][:100] + "..." if len(body["custom_greeting"]) > 100 else body["custom_greeting"]
+        app.logger.info("custom_greeting: %s", greeting_preview)
+    app.logger.info("=" * 80)
+    app.logger.info("FULL PAYLOAD (JSON):")
+    app.logger.info("%s", json.dumps(body, indent=2))
+    app.logger.info("=" * 80)
+    
     try:
-        app.logger.info("🎥 tavus:start:request %s", {"url": f"{TAVUS_BASE}/conversations", "body": body})
         r = requests.post(f"{TAVUS_BASE}/conversations", headers=HEADERS, json=body, timeout=30)
         app.logger.info("🎥 tavus:start:response status=%s", r.status_code)
         
