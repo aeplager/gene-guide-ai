@@ -90,12 +90,22 @@ if DB_CONNECTION_STRING:
     try:
         app.logger.info("Attempting to create database connection pool...")
         db_pool = psycopg2.pool.SimpleConnectionPool(1, 10, DB_CONNECTION_STRING)
-        app.logger.info("✅ Database connection pool created successfully")
+        app.logger.info("✅ Database connection pool created successfully (min=1, max=10)")
     except Exception as e:
         app.logger.error(f"❌ Failed to create database connection pool: {e}")
         app.logger.error(f"Error type: {type(e).__name__}")
 else:
     app.logger.warning("⚠️  DB_CONNECTION_STRING not set - database endpoints will not work")
+
+def log_pool_status():
+    """Log current connection pool statistics for debugging"""
+    if not db_pool:
+        return
+    try:
+        # Note: SimpleConnectionPool doesn't expose metrics directly, but we can log attempts
+        app.logger.debug("📊 Connection pool status requested")
+    except Exception as e:
+        app.logger.error(f"Error checking pool status: {e}")
 
 HEADERS = {"Content-Type": "application/json"}
 if TAVUS_API_KEY:
@@ -350,6 +360,96 @@ def healthz():
     app.logger.info(f"✅ healthz:response (instant) {response}")
     return jsonify(response), 200
 
+@app.get("/db-health")
+def db_health():
+    """
+    Dedicated database health check endpoint to diagnose DB performance issues
+    Tests connection acquisition and simple query execution
+    """
+    start_time = datetime.now(timezone.utc)
+    app.logger.info("🔍 db-health:start - Testing database performance")
+    
+    if not db_pool:
+        return jsonify({
+            "status": "error",
+            "error": "database_not_configured",
+            "message": "DB_CONNECTION_STRING not set"
+        }), 500
+    
+    conn = None
+    timings = {}
+    
+    try:
+        # Step 1: Test connection acquisition
+        conn_start = datetime.now(timezone.utc)
+        conn = db_pool.getconn()
+        conn_time = (datetime.now(timezone.utc) - conn_start).total_seconds()
+        timings['connection_acquisition_ms'] = round(conn_time * 1000, 2)
+        app.logger.info(f"🔍 db-health: Connection acquired in {timings['connection_acquisition_ms']}ms")
+        
+        # Step 2: Test simple query
+        query_start = datetime.now(timezone.utc)
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 as test")
+            result = cur.fetchone()
+        query_time = (datetime.now(timezone.utc) - query_start).total_seconds()
+        timings['simple_query_ms'] = round(query_time * 1000, 2)
+        app.logger.info(f"🔍 db-health: Simple query executed in {timings['simple_query_ms']}ms")
+        
+        # Step 3: Test realistic query (count users)
+        realistic_start = datetime.now(timezone.utc)
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM public.users")
+            count = cur.fetchone()[0]
+        realistic_time = (datetime.now(timezone.utc) - realistic_start).total_seconds()
+        timings['realistic_query_ms'] = round(realistic_time * 1000, 2)
+        timings['user_count'] = count
+        app.logger.info(f"🔍 db-health: Realistic query executed in {timings['realistic_query_ms']}ms (found {count} users)")
+        
+        # Step 4: Return connection to pool
+        return_start = datetime.now(timezone.utc)
+        db_pool.putconn(conn)
+        conn = None  # Mark as returned
+        return_time = (datetime.now(timezone.utc) - return_start).total_seconds()
+        timings['connection_return_ms'] = round(return_time * 1000, 2)
+        
+        total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        timings['total_ms'] = round(total_time * 1000, 2)
+        
+        app.logger.info(f"✅ db-health: SUCCESS - Total time {timings['total_ms']}ms")
+        
+        # Performance assessment
+        assessment = "excellent"
+        if timings['connection_acquisition_ms'] > 2000:
+            assessment = "poor - connection acquisition very slow (>2s)"
+        elif timings['connection_acquisition_ms'] > 500:
+            assessment = "fair - connection acquisition slow (>500ms)"
+        elif timings['simple_query_ms'] > 500:
+            assessment = "poor - query execution slow (>500ms)"
+        elif timings['total_ms'] > 3000:
+            assessment = "fair - total time slow (>3s)"
+        
+        return jsonify({
+            "status": "healthy",
+            "database": "ok",
+            "timings": timings,
+            "assessment": assessment,
+            "note": "If connection_acquisition_ms > 2000ms, issue is likely network latency to Azure Postgres"
+        }), 200
+        
+    except Exception as e:
+        total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        timings['total_ms'] = round(total_time * 1000, 2)
+        app.logger.exception(f"❌ db-health: FAILED after {timings['total_ms']}ms - {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "timings": timings
+        }), 500
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+
 @app.get("/tavus/start")
 @jwt_required(optional=True)
 def tavus_start(user_payload):
@@ -478,7 +578,7 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                     
                     # Build custom greeting for Tavus conversation
                     if condition and description:
-                        custom_greeting = f"Hi I understand you're here to talk about the results of your genetic testing. From what I can gather you are talking about {condition}. {description}"
+                        custom_greeting = f"Hi I understand you're here to talk about the results of your genetic testing. From what I can gather you are talking about {condition}. {description} I know these kinds of results can bring up questions or uncertainties. I'm here to help you understand them fully, so please feel free to ask any questions or share any concerns you have."
                         app.logger.info(f"👋 Custom greeting created for condition: {condition}")
                     else:
                         app.logger.info("⚠️  Skipping custom greeting - condition or description not available")
@@ -685,12 +785,19 @@ def tavus_end(conversation_id: str):
 # Database Endpoints
 @app.get("/persona-test-types")
 def get_persona_test_types():
+    start_time = datetime.now(timezone.utc)
+    app.logger.info("⏱️ persona-test-types:start")
+    
     if not db_pool:
         return jsonify({"error": "database_not_configured"}), 500
     
     conn = None
     try:
+        db_start = datetime.now(timezone.utc)
         conn = db_pool.getconn()
+        db_conn_time = (datetime.now(timezone.utc) - db_start).total_seconds()
+        
+        query_start = datetime.now(timezone.utc)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute('''
                 SELECT "PersonaTestTypeID", "PersonaTestType"
@@ -698,9 +805,15 @@ def get_persona_test_types():
                 ORDER BY "PersonaTestType"
             ''')
             results = cur.fetchall()
-            return jsonify([dict(row) for row in results]), 200
+        query_time = (datetime.now(timezone.utc) - query_start).total_seconds()
+        
+        total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        app.logger.info(f"✅ persona-test-types:success conn={db_conn_time:.3f}s query={query_time:.3f}s total={total_time:.3f}s")
+        
+        return jsonify([dict(row) for row in results]), 200
     except Exception as e:
-        app.logger.exception("get_persona_test_types:error %s", str(e))
+        total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        app.logger.exception(f"❌ get_persona_test_types:error {str(e)} total={total_time:.3f}s")
         return jsonify({"error": "database_query_failed", "message": str(e)}), 500
     finally:
         if conn:
@@ -708,12 +821,19 @@ def get_persona_test_types():
 
 @app.get("/classification-types")
 def get_classification_types():
+    start_time = datetime.now(timezone.utc)
+    app.logger.info("⏱️ classification-types:start")
+    
     if not db_pool:
         return jsonify({"error": "database_not_configured"}), 500
     
     conn = None
     try:
+        db_start = datetime.now(timezone.utc)
         conn = db_pool.getconn()
+        db_conn_time = (datetime.now(timezone.utc) - db_start).total_seconds()
+        
+        query_start = datetime.now(timezone.utc)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute('''
                 SELECT "ClassificationTypeID", "ClassificationType"
@@ -721,9 +841,15 @@ def get_classification_types():
                 ORDER BY "ClassificationType"
             ''')
             results = cur.fetchall()
-            return jsonify([dict(row) for row in results]), 200
+        query_time = (datetime.now(timezone.utc) - query_start).total_seconds()
+        
+        total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        app.logger.info(f"✅ classification-types:success conn={db_conn_time:.3f}s query={query_time:.3f}s total={total_time:.3f}s")
+        
+        return jsonify([dict(row) for row in results]), 200
     except Exception as e:
-        app.logger.exception("get_classification_types:error %s", str(e))
+        total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        app.logger.exception(f"❌ get_classification_types:error {str(e)} total={total_time:.3f}s")
         return jsonify({"error": "database_query_failed", "message": str(e)}), 500
     finally:
         if conn:
@@ -1029,6 +1155,9 @@ def get_base_information(user_id):
     """
     Fetch existing BaseInformation for a user to pre-populate the introduction form
     """
+    start_time = datetime.now(timezone.utc)
+    app.logger.info(f"⏱️ base-information:start user_id={user_id}")
+    
     if not db_pool:
         return jsonify({"error": "database_not_configured"}), 500
     
@@ -1039,11 +1168,13 @@ def get_base_information(user_id):
         app.logger.error(f"Invalid UUID format for user_id: {user_id}")
         return jsonify({"error": "invalid_user_id", "message": "user_id must be a valid UUID"}), 400
     
-    app.logger.info(f"📖 Fetching BaseInformation for user_id={user_id}")
-    
     conn = None
     try:
+        db_start = datetime.now(timezone.utc)
         conn = db_pool.getconn()
+        db_conn_time = (datetime.now(timezone.utc) - db_start).total_seconds()
+        
+        query_start = datetime.now(timezone.utc)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Fetch user's existing data with joined table info
             cur.execute('''
@@ -1068,31 +1199,36 @@ def get_base_information(user_id):
             ''', (user_id,))
             
             result = cur.fetchone()
+        query_time = (datetime.now(timezone.utc) - query_start).total_seconds()
             
-            if not result:
-                app.logger.info(f"ℹ️  No BaseInformation found for user_id={user_id}")
-                return jsonify({"exists": False}), 200
-            
-            # Convert result to JSON-friendly format
-            data = {
-                "exists": True,
-                "userId": result["UserID"],
-                "personaTestTypeId": result["PersonaTestTypeID"],
-                "personaTestType": result["PersonaTestType"],
-                "classificationTypeId": result["ClassificationTypeID"],
-                "classificationType": result["ClassificationType"],
-                "gene": result["Gene"],
-                "mutation": result["Mutation"],
-                "uploaded": bool(result["Uploaded"]) if result["Uploaded"] is not None else None,
-                "cachedAnalysis": result["CachedAnalysis"],
-                "analysisCachedAt": result["AnalysisCachedAt"].isoformat() if result["AnalysisCachedAt"] else None
-            }
-            
-            app.logger.info(f"✅ Found BaseInformation: persona={data['personaTestType']}, gene={data['gene']}")
-            return jsonify(data), 200
+        if not result:
+            total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            app.logger.info(f"ℹ️  base-information:not_found user_id={user_id} conn={db_conn_time:.3f}s query={query_time:.3f}s total={total_time:.3f}s")
+            return jsonify({"exists": False}), 200
+        
+        # Convert result to JSON-friendly format
+        data = {
+            "exists": True,
+            "userId": result["UserID"],
+            "personaTestTypeId": result["PersonaTestTypeID"],
+            "personaTestType": result["PersonaTestType"],
+            "classificationTypeId": result["ClassificationTypeID"],
+            "classificationType": result["ClassificationType"],
+            "gene": result["Gene"],
+            "mutation": result["Mutation"],
+            "uploaded": bool(result["Uploaded"]) if result["Uploaded"] is not None else None,
+            "cachedAnalysis": result["CachedAnalysis"],
+            "analysisCachedAt": result["AnalysisCachedAt"].isoformat() if result["AnalysisCachedAt"] else None
+        }
+        
+        total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        app.logger.info(f"✅ base-information:success persona={data['personaTestType']}, gene={data['gene']} conn={db_conn_time:.3f}s query={query_time:.3f}s total={total_time:.3f}s")
+        
+        return jsonify(data), 200
             
     except Exception as e:
-        app.logger.exception(f"❌ get_base_information:error {type(e).__name__}: {e}")
+        total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        app.logger.exception(f"❌ get_base_information:error {type(e).__name__}: {e} total={total_time:.3f}s")
         return jsonify({"error": "database_fetch_failed", "message": str(e)}), 500
     finally:
         if conn:
@@ -1101,6 +1237,9 @@ def get_base_information(user_id):
 # Authentication Endpoints
 @app.post("/auth/login")
 def auth_login():
+    start_time = datetime.now(timezone.utc)
+    app.logger.info("⏱️ auth:login:start")
+    
     if not db_pool:
         return jsonify({"error": "database_not_configured"}), 500
     
@@ -1116,40 +1255,55 @@ def auth_login():
     
     conn = None
     try:
+        # Time: Getting DB connection
+        db_start = datetime.now(timezone.utc)
         conn = db_pool.getconn()
+        db_conn_time = (datetime.now(timezone.utc) - db_start).total_seconds()
+        app.logger.info(f"⏱️ auth:login:db_connection took {db_conn_time:.3f}s")
+        
+        # Time: Database query
+        query_start = datetime.now(timezone.utc)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Query user by email
             cur.execute('''
                 SELECT id, user_email, display_name, company_id
                 FROM public.users
                 WHERE user_email = %s AND user_password = %s
             ''', (email, password))
             user = cur.fetchone()
+        query_time = (datetime.now(timezone.utc) - query_start).total_seconds()
+        app.logger.info(f"⏱️ auth:login:db_query took {query_time:.3f}s")
             
-            if user:
-                user_id = str(user['id'])
-                company_id = str(user['company_id']) if user['company_id'] else None
-                
-                # Create JWT token
-                token = create_jwt_token(user_id, email, company_id)
-                
-                app.logger.info("auth:login:success email=%s user_id=%s", email, user_id)
-                return jsonify({
-                    "success": True,
-                    "token": token,
-                    "user": {
-                        "id": user_id,
-                        "email": user['user_email'],
-                        "displayName": user['display_name'],
-                        "companyId": company_id
-                    }
-                }), 200
-            else:
-                app.logger.warning("auth:login:failed email=%s", email)
-                return jsonify({"error": "invalid_credentials", "message": "Invalid email or password"}), 401
+        if user:
+            user_id = str(user['id'])
+            company_id = str(user['company_id']) if user['company_id'] else None
+            
+            # Time: JWT token creation
+            jwt_start = datetime.now(timezone.utc)
+            token = create_jwt_token(user_id, email, company_id)
+            jwt_time = (datetime.now(timezone.utc) - jwt_start).total_seconds()
+            app.logger.info(f"⏱️ auth:login:jwt_creation took {jwt_time:.3f}s")
+            
+            total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            app.logger.info(f"✅ auth:login:success email={email} user_id={user_id} total_time={total_time:.3f}s")
+            
+            return jsonify({
+                "success": True,
+                "token": token,
+                "user": {
+                    "id": user_id,
+                    "email": user['user_email'],
+                    "displayName": user['display_name'],
+                    "companyId": company_id
+                }
+            }), 200
+        else:
+            total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            app.logger.warning(f"❌ auth:login:failed email={email} total_time={total_time:.3f}s")
+            return jsonify({"error": "invalid_credentials", "message": "Invalid email or password"}), 401
                 
     except Exception as e:
-        app.logger.exception("auth:login:error %s", str(e))
+        total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        app.logger.exception(f"❌ auth:login:error {str(e)} total_time={total_time:.3f}s")
         return jsonify({"error": "auth_failed", "message": str(e)}), 500
     finally:
         if conn:

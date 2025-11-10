@@ -47,7 +47,11 @@ const IntroductoryScreen = () => {
   useEffect(() => {
     const fetchPersonaTestTypes = async () => {
       try {
+        const start = performance.now();
+        console.log('[intro] ⏱️ fetching persona-test-types...');
         const resp = await fetch(`${backendBase}/persona-test-types`);
+        const elapsed = performance.now() - start;
+        console.log(`[intro] ⏱️ persona-test-types completed in ${elapsed.toFixed(0)}ms`);
         if (resp.ok) {
           const data = await resp.json();
           setPersonaTestTypes(data);
@@ -63,8 +67,11 @@ const IntroductoryScreen = () => {
   useEffect(() => {
     const fetchClassificationTypes = async () => {
       try {
-        console.log('[intro] fetching classification types from', `${backendBase}/classification-types`);
+        const start = performance.now();
+        console.log('[intro] ⏱️ fetching classification types from', `${backendBase}/classification-types`);
         const resp = await fetch(`${backendBase}/classification-types`);
+        const elapsed = performance.now() - start;
+        console.log(`[intro] ⏱️ classification-types completed in ${elapsed.toFixed(0)}ms`);
         if (resp.ok) {
           const data = await resp.json();
           console.log('[intro] classification types loaded:', data);
@@ -99,8 +106,11 @@ const IntroductoryScreen = () => {
       }
 
       try {
-        console.log('[intro] 📖 Fetching existing data for userId:', userId);
+        const start = performance.now();
+        console.log('[intro] ⏱️ Fetching existing data for userId:', userId);
         const resp = await fetch(`${backendBase}/base-information/${userId}`);
+        const elapsed = performance.now() - start;
+        console.log(`[intro] ⏱️ base-information completed in ${elapsed.toFixed(0)}ms`);
         
         if (resp.ok) {
           const data = await resp.json();

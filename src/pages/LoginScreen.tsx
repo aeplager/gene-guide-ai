@@ -28,7 +28,10 @@ const LoginScreen = () => {
       // Handle login
       setIsLoading(true);
       try {
-        console.log('[login] attempting login for', formData.email);
+        const loginStart = performance.now();
+        console.log('[login] ⏱️ attempting login for', formData.email);
+        
+        const fetchStart = performance.now();
         const response = await fetch(`${backendBase}/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -37,10 +40,13 @@ const LoginScreen = () => {
             password: formData.password
           })
         });
+        const fetchTime = performance.now() - fetchStart;
+        console.log(`[login] ⏱️ fetch completed in ${fetchTime.toFixed(0)}ms`);
 
         if (response.ok) {
           const data = await response.json();
-          console.log('[login] success', data);
+          const totalTime = performance.now() - loginStart;
+          console.log(`[login] ✅ success in ${totalTime.toFixed(0)}ms`, data);
           
           // Store user data and JWT token in localStorage
           localStorage.setItem('user', JSON.stringify(data.user));
