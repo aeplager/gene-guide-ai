@@ -441,7 +441,7 @@ const QAScreen = () => {
                     onClick={() => setInputMessage(question)}
                   >
                     <MessageCircle className="h-4 w-4 mr-2 flex-shrink-0" />
-                    <span className="text-sm">{question}</span>
+                    <span className="text-sm whitespace-normal break-words">{question}</span>
                   </Button>
                 ))}
               </CardContent>
@@ -455,19 +455,43 @@ const QAScreen = () => {
               <CardContent className="space-y-3">
                 <Button
                   variant="outline"
-                  className="w-full justify-start"
+                  className="w-full justify-start items-center h-auto py-3"
                   onClick={handleExportConversation}
                 >
-                  <Download className="h-4 w-4 mr-2" />
-                  Export for Doctor
+                  <Download className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Export for Doctor</span>
                 </Button>
                 <Button
                   variant="outline"
-                  className="w-full justify-start"
+                  className="w-full justify-start items-center h-auto py-3"
                   onClick={handleShareWithFamily}
                 >
-                  <Share className="h-4 w-4 mr-2" />
-                  Share with Family
+                  <Share className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Share with Family</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
+                  onClick={() => toast({ title: "Download Transcript", description: "Transcript download will be available soon." })}
+                >
+                  <Download className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Download Transcript</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
+                  onClick={() => toast({ title: "Download Summary", description: "Summary download will be available soon." })}
+                >
+                  <Download className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Download Summary</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
+                  onClick={() => toast({ title: "Download Common Questions", description: "Common questions download will be available soon." })}
+                >
+                  <Download className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Download Common Questions</span>
                 </Button>
               </CardContent>
             </Card>

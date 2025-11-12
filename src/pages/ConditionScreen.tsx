@@ -334,7 +334,7 @@ const ConditionScreen = () => {
                     variant="outline" 
                     className="justify-start h-auto p-4"
                   >
-                    <div className="text-left">
+                    <div className="text-left whitespace-normal break-words w-full">
                       <div className="font-medium">{resource}</div>
                     </div>
                   </Button>
