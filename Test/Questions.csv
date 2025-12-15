@@ -1,0 +1,124 @@
+QuestionNumber,QuestionText
+1,What does my genetic test result actually mean?
+2,Is this result positive, negative, or uncertain?
+3,What is a variant of uncertain significance (VUS)?
+4,Does this mean I have a disease or just a higher risk?
+5,How confident is the lab in this result?
+6,Could this variant be reclassified later?
+7,How will I know if it’s reclassified?
+8,What is the difference between a mutation and a variant?
+9,Does the location of the variant matter?
+10,How severe is the variant?
+11,Has this variant been seen in other families?
+12,How strong is the evidence linking this gene to disease?
+13,Is this a new (de novo) mutation or inherited?
+14,Can this explain symptoms I already have?
+15,Could this be a false positive or false negative?
+16,What is my lifetime risk of developing the condition?
+17,At what age does this usually start?
+18,What symptoms should I look out for?
+19,Are there mild and severe forms of this condition?
+20,What triggers can make symptoms worse or more likely?
+21,Can lifestyle changes reduce the risk?
+22,Does this variant affect life expectancy?
+23,Does it increase the risk of other diseases?
+24,Does having one copy vs. two copies change the risk?
+25,What should I do next medically?
+26,Should I see a specialist?
+27,What screenings do I need?
+28,How often should I be monitored?
+29,Are there preventive surgeries?
+30,Are there medications that help?
+31,Are there medications I should avoid?
+32,Is treatment recommended even if I have no symptoms?
+33,Should I change my diet or exercise?
+34,Are there clinical trials I qualify for?
+35,Do I need to repeat the test in the future?
+36,Who else in my family could have this?
+37,Should my parents get tested?
+38,Should my siblings be tested?
+39,Should my adult children be tested?
+40,What about extended family—cousins, aunts, uncles?
+41,How do I talk to my family about this result?
+42,What if a family member doesn’t want to know?
+43,How do we test relatives who live far away?
+44,Does this come from my mother’s or father’s side?
+45,If I’m adopted, how do I handle this?
+46,Does this affect my family’s insurance?
+47,What does this mean for my child’s health now?
+48,What does it mean for their future health?
+49,Should my child be tested now or wait until they’re older?
+50,What symptoms should I monitor in my child?
+51,Will this affect development or learning?
+52,Will this affect puberty or fertility?
+53,What do I tell my child about this?
+54,What if parents disagree about testing the child?
+55,Will this affect school participation?
+56,Could this affect sports clearance?
+57,Are there resources for children with this condition?
+58,What are the chances my future children will inherit this?
+59,Should my partner get tested?
+60,Are there reproductive options to avoid passing this on?
+61,Can we use IVF with genetic testing (PGT)?
+62,Can this be detected during pregnancy?
+63,Is carrier screening recommended for both partners?
+64,What are recessive vs. dominant inheritance risks?
+65,Does the gene affect pregnancy itself?
+66,Should I be worried?
+67,Is this my fault?
+68,Did I cause this in my child?
+69,How do I cope with anxiety about this?
+70,Where can I find support groups?
+71,How do I explain this to my spouse or partner?
+72,How do I handle family members who feel guilty?
+73,Will this affect my mental health?
+74,How do I deal with family members who blame each other?
+75,Who has access to my genetic information?
+76,Does my doctor automatically get the results?
+77,Will my employer ever see this?
+78,Will this affect my ability to get life insurance?
+79,What does GINA actually protect me from?
+80,What does GINA not protect me from?
+81,Is my data shared in research databases?
+82,Can I refuse to share my results with anyone?
+83,Should children be tested for adult-onset conditions?
+84,What if family members disagree about learning this information?
+85,Is it ethical to use IVF with genetic selection?
+86,How accurate is this test?
+87,Could another lab interpret the result differently?
+88,Does it matter which company did the test?
+89,What is the difference between sequencing and microarray?
+90,What is whole-exome vs. whole-genome sequencing?
+91,How much of my DNA was tested?
+92,What does “coverage” mean?
+93,Could something important have been missed?
+94,Do I need a broader test?
+95,Can environmental factors change how a gene behaves?
+96,Can I get my raw DNA files?
+97,What can I do with raw data?
+98,Should I upload raw data to other services?
+99,Will there be secondary or incidental findings?
+100,Should I opt in or out of learning secondary findings?
+101,If something else is discovered, will I be notified?
+102,Do I need a follow-up appointment?
+103,Should I have additional blood tests?
+104,How do I share these results with my doctors?
+105,Can you provide a letter for my family?
+106,How do I order testing for relatives?
+107,Will my insurance cover genetic counseling?
+108,How much will additional testing cost?
+109,Do I need to do anything to prepare for future screenings?
+110,Should I store a DNA sample for later?
+111,Does this explain my symptoms (e.g., cancer, heart issues, developmental delays)?
+112,Does this change my diagnosis?
+113,Does this mean I need surgery?
+114,Are there newer treatments being developed?
+115,Are there specialists who focus on this gene?
+116,Are certain ethnic or ancestral groups more affected?
+117,What does this mean for me personally?
+118,Am I automatically at risk because my relative tested positive?
+119,Should I get tested even if I have no symptoms?
+120,What if my relative refuses to share their results?
+121,Does this affect how I manage my own health?
+122,Should my children be evaluated?
+123,How do I talk to my family about next steps?
