@@ -782,6 +782,169 @@ def tavus_end(conversation_id: str):
         app.logger.exception("tavus:end:error %s", str(e))
         return jsonify({"error": "tavus_end_failed", "message": str(e)}), status
 
+@app.get("/vapi/start")
+@jwt_required(optional=True)
+def vapi_start(user_payload):
+    """
+    Prepare Vapi audio consultation with personalized greeting
+    Similar to /tavus/start but for audio-only consultations via Vapi.ai
+    """
+    app.logger.info("🎙️ vapi:start:request")
+    
+    # Extract user info from JWT (optional)
+    user_email = None
+    jwt_user_id = None
+    if user_payload:
+        user_email = user_payload.get('email')
+        jwt_user_id = user_payload.get('sub')
+        app.logger.info(f"📧 vapi:start:authenticated email={user_email} jwt_user_id={jwt_user_id}")
+    else:
+        app.logger.info("📧 vapi:start:unauthenticated (optional JWT not provided)")
+    
+    # Fetch user's genetic information from database to create personalized greeting
+    custom_greeting = None
+    genetic_context = None
+    
+    if jwt_user_id and db_pool:
+        conn = None
+        try:
+            conn = db_pool.getconn()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Fetch base information and analysis
+                cur.execute('''
+                    SELECT 
+                        bi."Gene",
+                        bi."Mutation",
+                        ct."ClassificationType",
+                        bi."CachedAnalysisBasic"
+                    FROM "GenCom"."BaseInformation" bi
+                    LEFT JOIN "GenCom"."ClassificationType" ct 
+                        ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
+                    WHERE bi."UserID" = %s
+                ''', (jwt_user_id,))
+                
+                result = cur.fetchone()
+                if result:
+                    gene = result.get("Gene", "").strip()
+                    mutation = result.get("Mutation", "").strip()
+                    classification = result.get("ClassificationType", "").strip()
+                    
+                    # Parse cached analysis for condition and description
+                    condition = None
+                    description = None
+                    if result.get("CachedAnalysisBasic"):
+                        try:
+                            cached = json.loads(result["CachedAnalysisBasic"])
+                            condition = cached.get("condition")
+                            description = cached.get("description")
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    # If cache is empty, generate condition & description on-the-fly
+                    if not condition or not description:
+                        app.logger.info("🔄 vapi: Cache empty - generating condition & description for greeting...")
+                        
+                        # Build prompt for basic analysis
+                        basic_prompt = f"""You are a professional genetic counselor providing educational information about genetic test results. 
+
+Given the following genetic information:
+- Gene: {gene}
+- Variant/Mutation: {mutation}
+- Classification: {classification}
+
+Please provide a BRIEF initial analysis in the following JSON format:
+
+{{
+  "condition": "Primary condition name associated with this gene variant",
+  "riskLevel": "High/Moderate/Low",
+  "description": "A clear, patient-friendly 2-3 sentence description of what this variant means"
+}}
+
+CRITICAL: Respond ONLY with the JSON object, no additional text."""
+                        
+                        try:
+                            llm_response = call_custom_llm(
+                                user_message=basic_prompt,
+                                max_tokens=512,
+                                stream=False
+                            )
+                            
+                            if "choices" in llm_response and len(llm_response["choices"]) > 0:
+                                ai_content = llm_response["choices"][0].get("message", {}).get("content", "")
+                                
+                                # Parse JSON from LLM response
+                                cleaned_content = ai_content.strip()
+                                if cleaned_content.startswith("```json"):
+                                    cleaned_content = cleaned_content[7:]
+                                if cleaned_content.startswith("```"):
+                                    cleaned_content = cleaned_content[3:]
+                                if cleaned_content.endswith("```"):
+                                    cleaned_content = cleaned_content[:-3]
+                                cleaned_content = cleaned_content.strip()
+                                
+                                basic_data = json.loads(cleaned_content)
+                                condition = basic_data.get("condition")
+                                description = basic_data.get("description")
+                                
+                                # Cache the result for future use
+                                cache_json = json.dumps(basic_data)
+                                cur.execute('''
+                                    UPDATE "GenCom"."BaseInformation"
+                                    SET "CachedAnalysisBasic" = %s,
+                                        "AnalysisCachedAt" = (now() at time zone 'utc')
+                                    WHERE "UserID" = %s
+                                ''', (cache_json, jwt_user_id))
+                                conn.commit()
+                                
+                                app.logger.info(f"✅ vapi: Generated and cached basic analysis: condition={condition}")
+                        except Exception as llm_error:
+                            app.logger.error(f"❌ vapi: Failed to generate basic analysis: {llm_error}")
+                    
+                    # Build custom greeting for Vapi conversation (same format as Tavus)
+                    if condition and description:
+                        custom_greeting = f"Hi I understand you're here to talk about the results of your genetic testing. From what I can gather you are talking about {condition}. {description} I know these kinds of results can bring up questions or uncertainties. I'm here to help you understand them fully, so please feel free to ask any questions or share any concerns you have."
+                        app.logger.info(f"👋 vapi: Custom greeting created for condition: {condition}")
+                    else:
+                        # Fallback to generic greeting if no genetic data
+                        custom_greeting = "Hi, I'm here to help you understand your genetic testing results. Please feel free to ask any questions or share any concerns you have."
+                        app.logger.info("⚠️  vapi: Using generic greeting - condition or description not available")
+                    
+                    # Build context string for Vapi AI counselor
+                    genetic_context = f"""Patient Genetic Information:
+- Gene: {gene}
+- Variant/Mutation: {mutation}
+- Classification: {classification}
+- Condition: {condition or 'Pending analysis'}
+- Description: {description or 'Analysis in progress'}
+
+Please use this information to provide personalized genetic counseling to the patient."""
+                    
+                    app.logger.info(f"🧬 vapi: Genetic context loaded for user {jwt_user_id}: gene={gene}, mutation={mutation}")
+                else:
+                    app.logger.warning(f"⚠️  vapi: No genetic data found for user {jwt_user_id}")
+                    custom_greeting = "Hi, I'm here to help you understand your genetic testing results. Please feel free to ask any questions or share any concerns you have."
+        except Exception as e:
+            app.logger.error(f"❌ vapi: Error fetching genetic context: {e}")
+            custom_greeting = "Hi, I'm here to help you understand your genetic testing results. Please feel free to ask any questions or share any concerns you have."
+        finally:
+            if conn:
+                db_pool.putconn(conn)
+    else:
+        # Unauthenticated user - use generic greeting
+        custom_greeting = "Hi, I'm here to help you understand your genetic testing results. Please feel free to ask any questions or share any concerns you have."
+        app.logger.info("👋 vapi: Using generic greeting for unauthenticated user")
+    
+    # Return configuration for frontend to use
+    response = {
+        "greeting": custom_greeting,
+        "genetic_context": genetic_context,
+        "user_email": user_email,
+        "authenticated": bool(jwt_user_id)
+    }
+    
+    app.logger.info(f"✅ vapi:start:success greeting_length={len(custom_greeting)} authenticated={bool(jwt_user_id)}")
+    return jsonify(response), 200
+
 # Database Endpoints
 @app.get("/persona-test-types")
 def get_persona_test_types():

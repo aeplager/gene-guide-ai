@@ -25,6 +25,13 @@ const LegacyVoiceCallPanel = () => {
   // Get Vapi public key from environment
   const vapiPublicKey = import.meta.env.VITE_VAPI_PUBLIC_KEY as string;
   
+  // Backend API base URL
+  const backendBase = import.meta.env.DEV ? '' : (import.meta.env.VITE_TAVUS_BACKEND_URL || '');
+  
+  // State for personalized greeting
+  const [personalizedGreeting, setPersonalizedGreeting] = useState<string | null>(null);
+  const [isLoadingGreeting, setIsLoadingGreeting] = useState<boolean>(false);
+  
   // Initialize Vapi instance once
   useEffect(() => {
     if (vapiPublicKey && !vapiRef.current) {
@@ -150,15 +157,82 @@ const LegacyVoiceCallPanel = () => {
     
     setCallState("connecting");
     setErrorMessage("");
+    setIsLoadingGreeting(true);
     
     try {
+      // Fetch personalized greeting from backend
+      console.log("[Vapi] Fetching personalized greeting from backend...");
+      const token = localStorage.getItem("auth_token");
+      const headers: HeadersInit = {
+        "Content-Type": "application/json",
+      };
+      
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      
+      const response = await fetch(`${backendBase}/vapi/start`, {
+        method: "GET",
+        headers,
+      });
+      
+      let greeting = null;
+      let geneticContext = null;
+      
+      if (response.ok) {
+        const data = await response.json();
+        greeting = data.greeting;
+        geneticContext = data.genetic_context;
+        setPersonalizedGreeting(greeting);
+        console.log("[Vapi] Personalized greeting received:", greeting?.substring(0, 50) + "...");
+        console.log("[Vapi] Genetic context available:", !!geneticContext);
+      } else {
+        console.warn("[Vapi] Failed to fetch greeting, using default assistant behavior");
+      }
+      
+      setIsLoadingGreeting(false);
+      
+      // Start Vapi call with correct assistant overrides format
       console.log("[Vapi] Starting call with assistant:", ASSISTANT_ID);
-      await vapiRef.current.start(ASSISTANT_ID);
+      
+      if (greeting || geneticContext) {
+        console.log("[Vapi] 🎯 Passing variables to assistant (FIXED FORMAT!)");
+        
+        // Build assistant overrides object (NOT wrapped in assistantOverrides key!)
+        const assistantOverrides: Record<string, any> = {};
+        
+        if (greeting || geneticContext) {
+          assistantOverrides.variableValues = {};
+          
+          if (greeting) {
+            assistantOverrides.variableValues.greeting = greeting;
+            console.log("[Vapi] ✅ Setting greeting variable:", greeting.substring(0, 50) + "...");
+          }
+          
+          if (geneticContext) {
+            assistantOverrides.variableValues.genetic_context = geneticContext;
+            console.log("[Vapi] ✅ Setting genetic_context variable");
+          }
+        }
+        
+        // Pass assistantOverrides DIRECTLY as 2nd parameter (no wrapper!)
+        await vapiRef.current.start(ASSISTANT_ID, assistantOverrides);
+        console.log("[Vapi] ✅ Call started with personalized variables!");
+      } else {
+        // No overrides needed
+        await vapiRef.current.start(ASSISTANT_ID);
+        console.log("[Vapi] ✅ Call started with default configuration");
+      }
     } catch (error) {
       console.error("[Vapi] Failed to start call:", error);
+      
+      // Log the full error object to see what Vapi is rejecting
+      console.error("[Vapi] Full error object:", JSON.stringify(error, null, 2));
+      
       const errorMsg = error instanceof Error ? error.message : "Failed to start call";
       setErrorMessage(errorMsg);
       setCallState("error");
+      setIsLoadingGreeting(false);
       
       toast({
         title: "Failed to Start Call",
@@ -317,11 +391,16 @@ const LegacyVoiceCallPanel = () => {
           {canStartCall ? (
             <Button
               onClick={startCall}
-              disabled={isConfigMissing || callState === "connecting"}
+              disabled={isConfigMissing || callState === "connecting" || isLoadingGreeting}
               size="lg"
               className="bg-green-600 hover:bg-green-700 text-white"
             >
-              {callState === "connecting" ? (
+              {isLoadingGreeting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                  Preparing...
+                </>
+              ) : callState === "connecting" ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
                   Connecting...
