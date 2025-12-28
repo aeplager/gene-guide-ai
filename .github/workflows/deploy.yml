@@ -120,6 +120,7 @@ jobs:
           push: true
           build-args: |
             VITE_TAVUS_BACKEND_URL=${{ steps.deploy_backend.outputs.backend_url }}
+            VITE_VAPI_PUBLIC_KEY=${{ secrets.VITE_VAPI_PUBLIC_KEY }}
           tags: |
             ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
             ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:latest

@@ -288,7 +288,7 @@ const ConditionScreen = () => {
         {/* Action Buttons - Moved above Educational Resources */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center items-center py-8">
           <Button 
-            onClick={() => navigate("/qa")}
+            onClick={() => navigate("/consultation-type")}
             size="lg"
             className="bg-gradient-primary px-8"
           >

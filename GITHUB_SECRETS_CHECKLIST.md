@@ -71,6 +71,13 @@ This document lists **ALL** secrets required for the GitHub Actions deployment w
 | `CUSTOM_LLM_API_KEY` | Custom LLM API key | `eb75c854-3f5b-4ed5-b538-1d67a157243a` |
 | `CUSTOM_LLM_PERSONA_ID` | Custom LLM persona ID | `9b94acf5-6fcb-4314-9049-fad8d641206d` |
 
+### 🎙️ Vapi.ai Audio Consultation (NEW)
+| Secret Name | Description | Example Value |
+|-------------|-------------|---------------|
+| `VITE_VAPI_PUBLIC_KEY` | Vapi.ai public key for audio calls | `pk_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6` |
+
+> ⚠️ **Important**: This must be your Vapi **PUBLIC** key (starts with `pk_`), NOT the secret key (starts with `sk_`). This is used in the frontend build.
+
 ---
 
 ## 🎯 Quick Action Items
@@ -97,9 +104,10 @@ TAVUS_ENABLE_RECORDING = false
 
 After adding secrets, verify:
 
-- [ ] All 18 secrets are added (or 22 if recording is enabled)
+- [ ] All 19 secrets are added (or 22 if recording is enabled)
 - [ ] No typos in secret names (they're case-sensitive!)
 - [ ] `TAVUS_ENABLE_RECORDING` is set (even if `false`)
+- [ ] `VITE_VAPI_PUBLIC_KEY` is set with your Vapi public key
 - [ ] `JWT_SECRET` is changed from default
 - [ ] `DB_CONNECTION_STRING` includes `?sslmode=require` for Azure Postgres
 
@@ -187,19 +195,20 @@ Even though you set `TAVUS_ENABLE_RECORDING=true`:
 
 ## Summary
 
-**Minimum Required (18 secrets):**
+**Minimum Required (19 secrets):**
 - 3 Azure auth secrets
 - 2 ACR secrets
 - 3 Tavus secrets
-- 1 **NEW** Recording enable secret (set to `false`)
+- 1 Recording enable secret (set to `false`)
 - 2 Database secrets
 - 1 JWT secret
 - 3 Custom LLM secrets
+- 1 **NEW** Vapi.ai public key (for audio consultations)
 
-**Optional Recording (add 3 more = 21 total):**
+**Optional Recording (add 3 more = 22 total):**
 - S3 bucket name
 - S3 region
 - AWS IAM role ARN
 
-**Total: 18 secrets minimum, 21 if recording is enabled**
+**Total: 19 secrets minimum, 22 if recording is enabled**
 

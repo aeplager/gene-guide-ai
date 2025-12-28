@@ -30,6 +30,7 @@ services:
       dockerfile: Dockerfile.frontend
       args:
         - VITE_TAVUS_BACKEND_URL=http://localhost:8086
+        - VITE_VAPI_PUBLIC_KEY=${VITE_VAPI_PUBLIC_KEY}
     depends_on:
       - backend
     ports:
