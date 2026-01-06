@@ -4,6 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { 
   MessageCircle, 
   Send, 
@@ -13,7 +15,10 @@ import {
   Share,
   AlertTriangle,
   Sparkles,
-  PhoneOff
+  PhoneOff,
+  ThumbsUp,
+  ThumbsDown,
+  Save
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useWarmLLM } from "@/hooks/useWarmLLM";
@@ -38,10 +43,31 @@ const QAScreen = () => {
   const frameRef = useRef<any>(null);
   const { toast } = useToast();
 
+  // State for conversation continuation
+  const [startNewConversation, setStartNewConversation] = useState(false);
+  const [existingConversationId, setExistingConversationId] = useState<string | null>(null);
+  const [existingConversationDate, setExistingConversationDate] = useState<string | null>(null);
+
   const backendBase = import.meta.env.DEV ? '' : (import.meta.env.VITE_TAVUS_BACKEND_URL || '');
   
   // Pre-warm the LLM when user enters this screen
   useWarmLLM();
+
+  // State for live transcript
+  const [transcript, setTranscript] = useState<Array<{
+    conversation_id: number;
+    ordinal: number;
+    role: string;
+    content: string | { text?: string; topic_id?: string; [key: string]: any };
+    created_at: string;
+    feedback_status: number;
+    feedback: string | null;
+  }>>([]);
+  
+  // State for feedback management (key is "conversationId-ordinal")
+  const [feedbackChanges, setFeedbackChanges] = useState<Record<string, { status: number; text: string; conversation_id: number; ordinal: number }>>({});
+  const [savingFeedback, setSavingFeedback] = useState(false);
+  const transcriptPollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -50,6 +76,99 @@ const QAScreen = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Fetch most recent conversation ID on page load
+  useEffect(() => {
+    const fetchRecentConversation = async () => {
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        console.log("[Conversation] No auth token, skipping fetch");
+        return;
+      }
+
+      try {
+        const response = await fetch(`${backendBase}/tavus/conversation-id/recent`, {
+          headers: {
+            "Authorization": `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.found && data.conversation_id) {
+            setExistingConversationId(data.conversation_id);
+            setExistingConversationDate(data.created_at);
+            console.log(`[Conversation] Found existing conversation: ${data.conversation_id} (${data.created_at})`);
+          } else {
+            console.log("[Conversation] No previous conversation found");
+          }
+        } else {
+          console.error("[Conversation] Error fetching:", response.status);
+        }
+      } catch (error) {
+        console.error("[Conversation] Fetch error:", error);
+      }
+    };
+
+    fetchRecentConversation();
+  }, [backendBase]);
+
+  // Start polling for transcript immediately on page load
+  // Logic:
+  // - Before video call starts: Show specific previous conversation (if exists)
+  // - After video call starts: Show all recent conversations (to capture both previous and active)
+  useEffect(() => {
+    const getConversationId = () => {
+      // If video call is active, always fetch recent (to capture all conversations)
+      if (isVideoCall) {
+        console.log(`[Transcript] 🎯 getConversationId: Video active, fetching recent (all conversations)`);
+        return undefined;
+      }
+      
+      // If no video call but we have an existing conversation to show, fetch that one
+      if (existingConversationId && !startNewConversation) {
+        console.log(`[Transcript] 🎯 getConversationId: Using existing conversation ${existingConversationId}`);
+        return existingConversationId;
+      }
+      
+      console.log(`[Transcript] 🎯 getConversationId: Fetching recent conversations (existingId: ${existingConversationId}, startNew: ${startNewConversation})`);
+      return undefined;
+    };
+
+    console.log("[Transcript] 🔄 Starting polling (or restarting due to dependency change)...");
+    console.log(`[Transcript] 🔄 Dependencies: existingConversationId=${existingConversationId}, startNewConversation=${startNewConversation}, isVideoCall=${isVideoCall}`);
+    
+    const convId = getConversationId();
+    if (convId) {
+      console.log(`[Transcript] ✅ Will poll specific conversation: ${convId}`);
+    } else {
+      console.log("[Transcript] ✅ Will poll recent conversations (2h)");
+    }
+    
+    // Fetch immediately
+    fetchTranscript(convId);
+    
+    // Clear any existing interval before creating a new one
+    if (transcriptPollIntervalRef.current) {
+      console.log("[Transcript] 🧹 Clearing existing polling interval");
+      clearInterval(transcriptPollIntervalRef.current);
+    }
+    
+    // Poll every 3 seconds
+    transcriptPollIntervalRef.current = setInterval(() => {
+      fetchTranscript(getConversationId());
+    }, 3000);
+    
+    console.log("[Transcript] ⏰ Polling interval started (every 3 seconds)");
+    
+    // Cleanup when effect re-runs or component unmounts
+    return () => {
+      if (transcriptPollIntervalRef.current) {
+        console.log("[Transcript] 🧹 Cleanup: Clearing polling interval");
+        clearInterval(transcriptPollIntervalRef.current);
+      }
+    };
+  }, [existingConversationId, startNewConversation, isVideoCall]); // Re-run when these change
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
@@ -102,6 +221,129 @@ const QAScreen = () => {
     return "That's a great question. Based on your BRCA1 results, I can provide you with evidence-based information to help you understand your situation better. Would you like me to explain any specific aspect in more detail? I'm here to help you process this information at your own pace.";
   };
 
+  // Fetch transcript from backend
+  const fetchTranscript = async (conversationId?: string) => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      console.log("[Transcript] ⚠️ No auth token, skipping fetch");
+      return;
+    }
+
+    try {
+      // Build URL with optional conversation_id parameter
+      let url = `${backendBase}/conversations/recent-transcript`;
+      if (conversationId) {
+        url += `?conversation_id=${encodeURIComponent(conversationId)}`;
+        console.log(`[Transcript] 📡 Fetching specific conversation: ${conversationId}`);
+        console.log(`[Transcript] 📡 Request URL: ${url}`);
+      } else {
+        console.log(`[Transcript] 📡 Fetching recent conversations (2h)`);
+        console.log(`[Transcript] 📡 Request URL: ${url}`);
+      }
+
+      const response = await fetch(url, {
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+      });
+
+      console.log(`[Transcript] 📥 Response status: ${response.status}`);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`[Transcript] 📥 Response data:`, data);
+        setTranscript(data.turns || []);
+        console.log(`[Transcript] ✅ Fetched ${data.count || 0} turns${conversationId ? ' for conversation ' + conversationId : ''}`);
+        
+        if (data.count === 0 && conversationId) {
+          console.warn(`[Transcript] ⚠️ No turns found for conversation ${conversationId} - conversation may not exist or have no turns yet`);
+        }
+      } else {
+        const errorText = await response.text();
+        console.error(`[Transcript] ❌ Error ${response.status}:`, errorText);
+      }
+    } catch (error) {
+      console.error("[Transcript] ❌ Fetch error:", error);
+    }
+  };
+
+  // Handle feedback changes
+  const handleFeedbackStatus = (conversationId: number, ordinal: number, status: number) => {
+    const key = `${conversationId}-${ordinal}`;
+    setFeedbackChanges(prev => ({
+      ...prev,
+      [key]: {
+        status,
+        text: prev[key]?.text || '',
+        conversation_id: conversationId,
+        ordinal: ordinal
+      }
+    }));
+  };
+
+  const handleFeedbackText = (conversationId: number, ordinal: number, text: string) => {
+    const key = `${conversationId}-${ordinal}`;
+    setFeedbackChanges(prev => ({
+      ...prev,
+      [key]: {
+        status: prev[key]?.status || 0,
+        text,
+        conversation_id: conversationId,
+        ordinal: ordinal
+      }
+    }));
+  };
+
+  // Save all feedback changes
+  const saveFeedback = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      toast({ title: "Error", description: "Not authenticated", variant: "destructive" });
+      return;
+    }
+
+    setSavingFeedback(true);
+    
+    try {
+      // Save each feedback change
+      const promises = Object.values(feedbackChanges).map((feedback) =>
+        fetch(`${backendBase}/conversations/turn-feedback`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            conversation_id: feedback.conversation_id,
+            ordinal: feedback.ordinal,
+            feedback_status: feedback.status,
+            feedback: feedback.text,
+          }),
+        })
+      );
+
+      await Promise.all(promises);
+      
+      // Clear changes and refresh transcript
+      setFeedbackChanges({});
+      await fetchTranscript();
+      
+      toast({ 
+        title: "Feedback Saved", 
+        description: `${Object.keys(feedbackChanges).length} feedback(s) saved successfully` 
+      });
+    } catch (error) {
+      console.error("[Feedback] Save error:", error);
+      toast({ 
+        title: "Error", 
+        description: "Failed to save feedback", 
+        variant: "destructive" 
+      });
+    } finally {
+      setSavingFeedback(false);
+    }
+  };
+
   const startVideoCall = async () => {
     setIsConnecting(true);
     try {
@@ -115,7 +357,19 @@ const QAScreen = () => {
         console.log('[qa] sending with JWT token');
       }
       
-      const resp = await fetch(`${backendBase}/tavus/start`, { headers });
+      // Determine if we should continue an existing conversation
+      const continueConversationId = !startNewConversation && existingConversationId ? existingConversationId : null;
+      
+      // Build URL with optional conversation continuation
+      let url = `${backendBase}/tavus/start`;
+      if (continueConversationId) {
+        url += `?continue_conversation_id=${encodeURIComponent(continueConversationId)}`;
+        console.log(`[qa] Continuing conversation: ${continueConversationId}`);
+      } else {
+        console.log('[qa] Starting new conversation');
+      }
+      
+      const resp = await fetch(url, { headers });
       if (!resp.ok) throw new Error('Failed to start conversation');
       const data = await resp.json();
       console.log('[qa] tavus:start response', data);
@@ -194,6 +448,9 @@ const QAScreen = () => {
         await Promise.race([joinPromise, timeoutPromise]);
         console.log('[qa] ✅ frame.join() completed successfully');
         toast({ title: 'Video call started', description: 'Connected to AI genetics counselor' });
+        
+        // Note: Transcript polling already running from page load
+        console.log("[Transcript] Video call started, transcript will continue updating");
       } catch (joinError) {
         console.error('[qa] ❌ frame.join() failed or timed out:', joinError);
         throw joinError;
@@ -229,6 +486,9 @@ const QAScreen = () => {
   };
 
   const endVideoCall = async () => {
+    // Keep transcript polling running to show conversation history
+    console.log("[Transcript] Video ended, but transcript will continue showing");
+    
     try {
       if (conversationId) {
         console.log('[qa] ending conversation', conversationId);
@@ -259,6 +519,11 @@ const QAScreen = () => {
 
   useEffect(() => {
     return () => {
+      // Cleanup transcript polling
+      if (transcriptPollIntervalRef.current) {
+        clearInterval(transcriptPollIntervalRef.current);
+      }
+      // Cleanup video frame
       try {
         frameRef.current?.leave?.();
         frameRef.current?.destroy?.();
@@ -308,48 +573,83 @@ const QAScreen = () => {
 
         <div className="grid lg:grid-cols-4 gap-6">
           {/* Video Chat Interface */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-3 space-y-6">
             <Card className="shadow-professional h-[600px] flex flex-col">
               <CardHeader className="flex-shrink-0">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <Bot className="h-5 w-5 text-primary" />
-                      AI Genetics Counselor
-                    </CardTitle>
-                    <CardDescription>
-                      Live video consultation with AI specialist
-                    </CardDescription>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Bot className="h-5 w-5 text-primary" />
+                        AI Genetics Counselor
+                      </CardTitle>
+                      <CardDescription>
+                        Live video consultation with AI specialist
+                      </CardDescription>
+                    </div>
+                    <div className="flex gap-2">
+                      {!isVideoCall ? (
+                        <Button
+                          onClick={startVideoCall}
+                          disabled={isConnecting}
+                          className="bg-primary text-primary-foreground"
+                        >
+                          {isConnecting ? (
+                            <div className="flex items-center gap-2">
+                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              Connecting...
+                            </div>
+                          ) : (
+                            <>
+                              <Video className="h-4 w-4 mr-2" />
+                              Start Video Call
+                            </>
+                          )}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="destructive"
+                          onClick={endVideoCall}
+                        >
+                          <PhoneOff className="h-4 w-4 mr-2" />
+                          End Call
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    {!isVideoCall ? (
-                      <Button
-                        onClick={startVideoCall}
-                        disabled={isConnecting}
-                        className="bg-primary text-primary-foreground"
-                      >
-                        {isConnecting ? (
-                          <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            Connecting...
-                          </div>
-                        ) : (
-                          <>
-                            <Video className="h-4 w-4 mr-2" />
-                            Start Video Call
-                          </>
+
+                  {/* Conversation continuation options - only show when not in a call */}
+                  {!isVideoCall && existingConversationId && (
+                    <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
+                      <div className="text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">Previous conversation found</span>
+                        {existingConversationDate && (
+                          <span className="ml-2">
+                            from {new Date(existingConversationDate).toLocaleDateString()} at{' '}
+                            {new Date(existingConversationDate).toLocaleTimeString()}
+                          </span>
                         )}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="destructive"
-                        onClick={endVideoCall}
-                      >
-                        <PhoneOff className="h-4 w-4 mr-2" />
-                        End Call
-                      </Button>
-                    )}
-                  </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox 
+                          id="start-new" 
+                          checked={startNewConversation}
+                          onCheckedChange={(checked) => setStartNewConversation(checked === true)}
+                        />
+                        <Label 
+                          htmlFor="start-new" 
+                          className="text-sm font-normal cursor-pointer"
+                        >
+                          Start new conversation (instead of continuing previous one)
+                        </Label>
+                      </div>
+                      {!startNewConversation && (
+                        <div className="text-xs text-muted-foreground bg-primary/5 border-l-2 border-primary pl-2 py-1">
+                          ✓ Will continue your previous conversation
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </CardHeader>
 
@@ -418,6 +718,130 @@ const QAScreen = () => {
                         <Send className="h-4 w-4" />
                       </Button>
                     </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Live Transcript Display - Moved here right below video */}
+            <Card className="shadow-professional">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <MessageCircle className="h-5 w-5 text-primary" />
+                      Live Conversation Transcript
+                    </CardTitle>
+                    <CardDescription>
+                      {isVideoCall ? (
+                        <>Showing all conversations from the last 2 hours (most recent at top)</>
+                      ) : existingConversationId && !startNewConversation ? (
+                        <>Showing previous conversation from {existingConversationDate && new Date(existingConversationDate).toLocaleDateString()} (most recent at top)</>
+                      ) : (
+                        <>Showing conversations from the last 2 hours (most recent at top)</>
+                      )}
+                    </CardDescription>
+                  </div>
+                  {Object.keys(feedbackChanges).length > 0 && (
+                    <Button 
+                      onClick={saveFeedback} 
+                      disabled={savingFeedback}
+                      className="flex items-center gap-2"
+                    >
+                      <Save className="h-4 w-4" />
+                      {savingFeedback ? 'Saving...' : `Save Feedback (${Object.keys(feedbackChanges).length})`}
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {transcript.length > 0 ? (
+                  <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                    {transcript.map((turn, idx) => {
+                      const key = `${turn.conversation_id}-${turn.ordinal}`;
+                      const currentFeedback = feedbackChanges[key] || {
+                        status: turn.feedback_status || 0,
+                        text: turn.feedback || '',
+                        conversation_id: turn.conversation_id,
+                        ordinal: turn.ordinal
+                      };
+                      const hasUnsavedChanges = !!feedbackChanges[key];
+                      
+                      return (
+                        <div
+                          key={key}
+                          className={`p-4 rounded-lg ${
+                            turn.role === 'user' 
+                              ? 'bg-blue-50 border border-blue-200' 
+                              : 'bg-gray-50 border border-gray-200'
+                          } ${hasUnsavedChanges ? 'ring-2 ring-primary/50' : ''}`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={turn.role === 'user' ? 'default' : 'secondary'} className="text-sm">
+                                {turn.role === 'user' ? '👤 You' : '🤖 Assistant'}
+                              </Badge>
+                              <span className="text-xs text-gray-500">
+                                {new Date(turn.created_at).toLocaleTimeString()}
+                              </span>
+                              {hasUnsavedChanges && (
+                                <Badge variant="outline" className="text-xs">
+                                  Unsaved
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant={currentFeedback.status === 1 ? 'default' : 'ghost'}
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => handleFeedbackStatus(turn.conversation_id, turn.ordinal, currentFeedback.status === 1 ? 0 : 1)}
+                              >
+                                <ThumbsUp className={`h-4 w-4 ${currentFeedback.status === 1 ? 'fill-current' : ''}`} />
+                              </Button>
+                              <Button
+                                variant={currentFeedback.status === 2 ? 'destructive' : 'ghost'}
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => handleFeedbackStatus(turn.conversation_id, turn.ordinal, currentFeedback.status === 2 ? 0 : 2)}
+                              >
+                                <ThumbsDown className={`h-4 w-4 ${currentFeedback.status === 2 ? 'fill-current' : ''}`} />
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="text-base text-gray-800 leading-relaxed mb-2">
+                            {typeof turn.content === 'string' 
+                              ? turn.content 
+                              : turn.content?.text || JSON.stringify(turn.content)}
+                          </div>
+                          {currentFeedback.status > 0 && (
+                            <div className="mt-3 pt-3 border-t border-gray-300">
+                              <textarea
+                                value={currentFeedback.text}
+                                onChange={(e) => handleFeedbackText(turn.conversation_id, turn.ordinal, e.target.value)}
+                                placeholder="Add optional feedback comment..."
+                                className="w-full p-2 text-sm border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                                rows={2}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <MessageCircle className="h-16 w-16 mx-auto mb-4 opacity-30" />
+                    <p className="text-base font-medium">
+                      {existingConversationId && !startNewConversation && !isVideoCall
+                        ? 'Loading previous conversation...' 
+                        : 'No recent conversations'}
+                    </p>
+                    <p className="text-sm mt-2">
+                      {existingConversationId && !startNewConversation && !isVideoCall
+                        ? 'If this takes too long, check your connection'
+                        : 'Transcript will appear when you start a conversation'}
+                    </p>
                   </div>
                 )}
               </CardContent>

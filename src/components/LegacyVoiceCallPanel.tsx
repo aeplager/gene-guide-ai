@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Phone, PhoneOff, Mic, MicOff, AlertTriangle } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, AlertTriangle, MessageCircle, ThumbsUp, ThumbsDown, Save } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 
 type CallState = "idle" | "connecting" | "in-call" | "ended" | "error";
@@ -32,6 +32,22 @@ const LegacyVoiceCallPanel = () => {
   const [personalizedGreeting, setPersonalizedGreeting] = useState<string | null>(null);
   const [isLoadingGreeting, setIsLoadingGreeting] = useState<boolean>(false);
   
+  // State for live transcript
+  const [transcript, setTranscript] = useState<Array<{
+    conversation_id: number;
+    ordinal: number;
+    role: string;
+    content: string | { text?: string; topic_id?: string; [key: string]: any };
+    created_at: string;
+    feedback_status: number;
+    feedback: string | null;
+  }>>([]);
+  
+  // State for feedback management (key is "conversationId-ordinal")
+  const [feedbackChanges, setFeedbackChanges] = useState<Record<string, { status: number; text: string; conversation_id: number; ordinal: number }>>({});
+  const [savingFeedback, setSavingFeedback] = useState(false);
+  const transcriptPollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
   // Initialize Vapi instance once
   useEffect(() => {
     if (vapiPublicKey && !vapiRef.current) {
@@ -57,6 +73,9 @@ const LegacyVoiceCallPanel = () => {
       setCallDuration(prev => prev + 1);
     }, 1000);
     
+    // Note: Transcript polling already running from page load
+    console.log("[Transcript] Audio call started, transcript will continue updating");
+    
     toast({
       title: "Call Connected",
       description: "You're now connected to the AI counselor"
@@ -72,6 +91,9 @@ const LegacyVoiceCallPanel = () => {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    
+    // Keep transcript polling running to show conversation history
+    console.log("[Transcript] Call ended, but transcript will continue showing");
     
     toast({
       title: "Call Ended",
@@ -132,6 +154,9 @@ const LegacyVoiceCallPanel = () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
+      if (transcriptPollIntervalRef.current) {
+        clearInterval(transcriptPollIntervalRef.current);
+      }
       if (vapiRef.current && callState === "in-call") {
         try {
           vapiRef.current.stop();
@@ -141,6 +166,123 @@ const LegacyVoiceCallPanel = () => {
       }
     };
   }, [callState]);
+  
+  // Start polling for transcript immediately on page load
+  useEffect(() => {
+    console.log("[Transcript] Starting polling on page load...");
+    fetchTranscript(); // Fetch immediately
+    
+    // Poll every 3 seconds
+    transcriptPollIntervalRef.current = setInterval(() => {
+      fetchTranscript();
+    }, 3000);
+    
+    // Cleanup handled in the unmount useEffect above
+  }, []); // Empty dependency array = run once on mount
+  
+  // Fetch transcript from backend
+  const fetchTranscript = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      console.log("[Transcript] No auth token, skipping fetch");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${backendBase}/conversations/recent-transcript`, {
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setTranscript(data.turns || []);
+        console.log(`[Transcript] Fetched ${data.count || 0} turns`);
+      } else {
+        console.error("[Transcript] Error:", response.status);
+      }
+    } catch (error) {
+      console.error("[Transcript] Fetch error:", error);
+    }
+  };
+
+  // Handle feedback changes
+  const handleFeedbackStatus = (conversationId: number, ordinal: number, status: number) => {
+    const key = `${conversationId}-${ordinal}`;
+    setFeedbackChanges(prev => ({
+      ...prev,
+      [key]: {
+        status,
+        text: prev[key]?.text || '',
+        conversation_id: conversationId,
+        ordinal: ordinal
+      }
+    }));
+  };
+
+  const handleFeedbackText = (conversationId: number, ordinal: number, text: string) => {
+    const key = `${conversationId}-${ordinal}`;
+    setFeedbackChanges(prev => ({
+      ...prev,
+      [key]: {
+        status: prev[key]?.status || 0,
+        text,
+        conversation_id: conversationId,
+        ordinal: ordinal
+      }
+    }));
+  };
+
+  // Save all feedback changes
+  const saveFeedback = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      toast({ title: "Error", description: "Not authenticated", variant: "destructive" });
+      return;
+    }
+
+    setSavingFeedback(true);
+    
+    try {
+      // Save each feedback change
+      const promises = Object.values(feedbackChanges).map((feedback) =>
+        fetch(`${backendBase}/conversations/turn-feedback`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            conversation_id: feedback.conversation_id,
+            ordinal: feedback.ordinal,
+            feedback_status: feedback.status,
+            feedback: feedback.text,
+          }),
+        })
+      );
+
+      await Promise.all(promises);
+      
+      // Clear changes and refresh transcript
+      setFeedbackChanges({});
+      await fetchTranscript();
+      
+      toast({ 
+        title: "Feedback Saved", 
+        description: `${Object.keys(feedbackChanges).length} feedback(s) saved successfully` 
+      });
+    } catch (error) {
+      console.error("[Feedback] Save error:", error);
+      toast({ 
+        title: "Error", 
+        description: "Failed to save feedback", 
+        variant: "destructive" 
+      });
+    } finally {
+      setSavingFeedback(false);
+    }
+  };
   
   const startCall = async () => {
     if (!vapiRef.current) {
@@ -245,6 +387,9 @@ const LegacyVoiceCallPanel = () => {
   const stopCall = () => {
     if (!vapiRef.current) return;
     
+    // Keep transcript polling running to show conversation history
+    console.log("[Transcript] Manual stop, but transcript will continue showing");
+    
     try {
       console.log("[Vapi] Stopping call");
       vapiRef.current.stop();
@@ -282,6 +427,7 @@ const LegacyVoiceCallPanel = () => {
   const isCallActive = callState === "connecting" || callState === "in-call";
   
   return (
+    <>
     <Card className="shadow-professional">
       <CardHeader>
         <div className="flex items-center justify-between">
@@ -452,6 +598,117 @@ const LegacyVoiceCallPanel = () => {
         </div>
       </CardContent>
     </Card>
+    
+    {/* Live Transcript Display */}
+    <Card className="mt-6 shadow-professional">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <MessageCircle className="h-5 w-5 text-primary" />
+              Live Conversation Transcript
+            </CardTitle>
+            <CardDescription>
+              Showing conversations from the last 2 hours (most recent at top)
+            </CardDescription>
+          </div>
+          {Object.keys(feedbackChanges).length > 0 && (
+            <Button 
+              onClick={saveFeedback} 
+              disabled={savingFeedback}
+              className="flex items-center gap-2"
+            >
+              <Save className="h-4 w-4" />
+              {savingFeedback ? 'Saving...' : `Save Feedback (${Object.keys(feedbackChanges).length})`}
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {transcript.length > 0 ? (
+          <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+            {transcript.map((turn, idx) => {
+              const key = `${turn.conversation_id}-${turn.ordinal}`;
+              const currentFeedback = feedbackChanges[key] || {
+                status: turn.feedback_status || 0,
+                text: turn.feedback || '',
+                conversation_id: turn.conversation_id,
+                ordinal: turn.ordinal
+              };
+              const hasUnsavedChanges = !!feedbackChanges[key];
+              
+              return (
+                <div
+                  key={key}
+                  className={`p-4 rounded-lg ${
+                    turn.role === 'user' 
+                      ? 'bg-blue-50 border border-blue-200' 
+                      : 'bg-gray-50 border border-gray-200'
+                  } ${hasUnsavedChanges ? 'ring-2 ring-primary/50' : ''}`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Badge variant={turn.role === 'user' ? 'default' : 'secondary'} className="text-sm">
+                        {turn.role === 'user' ? '👤 You' : '🤖 Assistant'}
+                      </Badge>
+                      <span className="text-xs text-gray-500">
+                        {new Date(turn.created_at).toLocaleTimeString()}
+                      </span>
+                      {hasUnsavedChanges && (
+                        <Badge variant="outline" className="text-xs">
+                          Unsaved
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant={currentFeedback.status === 1 ? 'default' : 'ghost'}
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => handleFeedbackStatus(turn.conversation_id, turn.ordinal, currentFeedback.status === 1 ? 0 : 1)}
+                      >
+                        <ThumbsUp className={`h-4 w-4 ${currentFeedback.status === 1 ? 'fill-current' : ''}`} />
+                      </Button>
+                      <Button
+                        variant={currentFeedback.status === 2 ? 'destructive' : 'ghost'}
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => handleFeedbackStatus(turn.conversation_id, turn.ordinal, currentFeedback.status === 2 ? 0 : 2)}
+                      >
+                        <ThumbsDown className={`h-4 w-4 ${currentFeedback.status === 2 ? 'fill-current' : ''}`} />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="text-base text-gray-800 leading-relaxed mb-2">
+                    {typeof turn.content === 'string' 
+                      ? turn.content 
+                      : turn.content?.text || JSON.stringify(turn.content)}
+                  </div>
+                  {currentFeedback.status > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-300">
+                      <textarea
+                        value={currentFeedback.text}
+                        onChange={(e) => handleFeedbackText(turn.conversation_id, turn.ordinal, e.target.value)}
+                        placeholder="Add optional feedback comment..."
+                        className="w-full p-2 text-sm border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                        rows={2}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-12 text-muted-foreground">
+            <MessageCircle className="h-16 w-16 mx-auto mb-4 opacity-30" />
+            <p className="text-base font-medium">No recent conversations</p>
+            <p className="text-sm mt-2">Start a call to see the transcript here</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+    </>
   );
 };
 

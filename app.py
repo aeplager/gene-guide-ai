@@ -455,8 +455,15 @@ def db_health():
 def tavus_start(user_payload):
     """
     Start a Tavus conversation with optional JWT authentication and database tracking
+    Supports continuing existing conversations via ?continue_conversation_id=xxx
     """
     debug_info = {}
+    
+    # Check if we should continue an existing conversation
+    continue_conversation_id = request.args.get('continue_conversation_id')
+    if continue_conversation_id:
+        app.logger.info(f"🔄 tavus:start: Continuing conversation {continue_conversation_id}")
+        debug_info['continuing_conversation'] = continue_conversation_id
     
     if not (TAVUS_API_KEY and TAVUS_REPLICA_ID and TAVUS_PERSONA_ID):
         return jsonify({"error": "server_misconfigured", "debug": debug_info}), 500
@@ -584,14 +591,20 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         app.logger.info("⚠️  Skipping custom greeting - condition or description not available")
                     
                     # Build context string for Tavus AI counselor
-                    genetic_context = f"""Patient Genetic Information:
+                    context_parts = [f"""Patient Genetic Information:
 - Gene: {gene}
 - Variant/Mutation: {mutation}
 - Classification: {classification}
 - Condition: {condition or 'Pending analysis'}
 - Description: {description or 'Analysis in progress'}
 
-Please use this information to provide personalized genetic counseling to the patient."""
+Please use this information to provide personalized genetic counseling to the patient."""]
+                    
+                    # Add continuation context if resuming a previous conversation
+                    if continue_conversation_id:
+                        context_parts.append(f"\n\nIMPORTANT: This is a continuation of a previous conversation (ID: {continue_conversation_id}). Please reference and build upon the previous discussion context when appropriate.")
+                    
+                    genetic_context = "\n".join(context_parts)
                     
                     app.logger.info(f"🧬 Genetic context loaded for user {jwt_user_id}: gene={gene}, mutation={mutation}")
                 else:
@@ -944,6 +957,234 @@ Please use this information to provide personalized genetic counseling to the pa
     
     app.logger.info(f"✅ vapi:start:success greeting_length={len(custom_greeting)} authenticated={bool(jwt_user_id)}")
     return jsonify(response), 200
+
+@app.get("/tavus/conversation-id/recent")
+@jwt_required()
+def get_recent_tavus_conversation(user_payload):
+    """
+    Fetch the most recent tavus_conversation_id for the authenticated user
+    Used to continue existing conversations instead of starting new ones
+    """
+    user_email = user_payload.get('email')
+    
+    if not user_email:
+        app.logger.warning("⚠️  recent-conversation: No email in JWT")
+        return jsonify({"error": "No email in JWT"}), 400
+    
+    if not db_pool:
+        app.logger.error("❌ recent-conversation: Database not configured")
+        return jsonify({"error": "Database not configured"}), 500
+    
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch most recent conversation_id using the provided SQL
+            cur.execute("""
+                SELECT C.tavus_conversation_id, CU.created_at
+                FROM public.conversations C 
+                INNER JOIN public.conversation_turns CT ON C.id = CT.conversation_id 
+                INNER JOIN public.conversations_users CU ON C.tavus_conversation_id = CU.tavus_conversation_id
+                INNER JOIN public.users U ON CU.user_id = U.id
+                WHERE U.user_email = %s
+                ORDER BY CU.created_at DESC 
+                LIMIT 1
+            """, (user_email,))
+            
+            result = cur.fetchone()
+            
+            if result:
+                conversation_id = result['tavus_conversation_id']
+                created_at = result['created_at']
+                app.logger.info(f"✅ recent-conversation: Found {conversation_id} for {user_email} (created: {created_at})")
+                
+                return jsonify({
+                    "conversation_id": conversation_id,
+                    "created_at": created_at.isoformat() if created_at else None,
+                    "found": True
+                }), 200
+            else:
+                app.logger.info(f"ℹ️  recent-conversation: No previous conversation found for {user_email}")
+                return jsonify({
+                    "found": False
+                }), 200
+            
+    except Exception as e:
+        app.logger.error(f"❌ recent-conversation: Error fetching: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+
+@app.get("/conversations/recent-transcript")
+@jwt_required()
+def get_recent_transcript(user_payload):
+    """
+    Fetch recent conversation transcript for authenticated user (last 2 hours by default)
+    OR fetch a specific conversation by tavus_conversation_id if provided
+    Used by both Tavus video and Vapi audio to display live transcripts.
+    The custom LLM automatically stores all conversation turns in the database.
+    
+    Query Parameters:
+    - conversation_id (optional): Fetch transcript for a specific Tavus conversation ID
+    """
+    user_email = user_payload.get('email')
+    conversation_id = request.args.get('conversation_id', None)
+    
+    if not user_email:
+        app.logger.warning("⚠️  transcript: No email in JWT")
+        return jsonify({"error": "No email in JWT"}), 400
+    
+    if not db_pool:
+        app.logger.error("❌ transcript: Database not configured")
+        return jsonify({"error": "Database not configured"}), 500
+    
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch transcript using conversations_users table (for Tavus)
+            # This matches the user's SQL query structure
+            
+            if conversation_id:
+                # Fetch specific conversation (regardless of age)
+                # Sort by created_at DESC so most recent messages appear first
+                app.logger.info(f"📋 transcript: Fetching specific conversation {conversation_id} for {user_email}")
+                cur.execute("""
+                    SELECT 
+                        C.id as conversation_id,
+                        CT.ordinal,
+                        CT.created_at,
+                        U.user_email,
+                        C.user_id,
+                        CT.role,
+                        CT.content,
+                        CT.feedback,
+                        CT.feedback_status
+                    FROM public.conversations C 
+                    INNER JOIN public.conversation_turns CT ON C.id = CT.conversation_id  
+                    INNER JOIN public.conversations_users CU 
+                        ON C.tavus_conversation_id = CU.tavus_conversation_id
+                    INNER JOIN public.users U ON CU.user_id = U.id 
+                    WHERE U.user_email = %s
+                      AND C.tavus_conversation_id = %s
+                    ORDER BY CT.created_at DESC
+                    LIMIT 10000
+                """, (user_email, conversation_id))
+            else:
+                # Fetch recent conversations (last 2 hours)
+                # Sort by created_at DESC so most recent messages appear first
+                app.logger.info(f"📋 transcript: Fetching recent (2h) conversations for {user_email}")
+                cur.execute("""
+                    SELECT 
+                        C.id as conversation_id,
+                        CT.ordinal,
+                        CT.created_at,
+                        U.user_email,
+                        C.user_id,
+                        CT.role,
+                        CT.content,
+                        CT.feedback,
+                        CT.feedback_status
+                    FROM public.conversations C 
+                    INNER JOIN public.conversation_turns CT ON C.id = CT.conversation_id  
+                    INNER JOIN public.conversations_users CU 
+                        ON C.tavus_conversation_id = CU.tavus_conversation_id
+                    INNER JOIN public.users U ON CU.user_id = U.id 
+                    WHERE U.user_email = %s
+                      AND CT.created_at >= (NOW() AT TIME ZONE 'UTC') - INTERVAL '2 hours'
+                    ORDER BY CT.created_at DESC
+                    LIMIT 10000
+                """, (user_email,))
+            
+            turns = cur.fetchall()
+            
+            app.logger.info(f"✅ transcript: Fetched {len(turns)} turns for {user_email}")
+            
+            return jsonify({
+                "turns": [dict(t) for t in turns],
+                "count": len(turns),
+                "conversation_id": conversation_id
+            }), 200
+            
+    except Exception as e:
+        app.logger.error(f"❌ transcript: Error fetching: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+
+@app.post("/conversations/turn-feedback")
+@jwt_required()
+def save_turn_feedback(user_payload):
+    """
+    Save feedback for a conversation turn.
+    Expects: { "conversation_id": int, "ordinal": int, "feedback_status": int (1=thumbs up, 2=thumbs down), "feedback": str (optional) }
+    """
+    user_email = user_payload.get('email')
+    
+    if not user_email:
+        app.logger.warning("⚠️  feedback: No email in JWT")
+        return jsonify({"error": "No email in JWT"}), 400
+    
+    if not db_pool:
+        app.logger.error("❌ feedback: Database not configured")
+        return jsonify({"error": "Database not configured"}), 500
+    
+    data = request.get_json()
+    conversation_id = data.get('conversation_id')
+    ordinal = data.get('ordinal')
+    feedback_status = data.get('feedback_status')
+    feedback = data.get('feedback', '')
+    
+    if not conversation_id or not isinstance(conversation_id, int):
+        return jsonify({"error": "conversation_id is required and must be an integer"}), 400
+    
+    if ordinal is None or not isinstance(ordinal, int):
+        return jsonify({"error": "ordinal is required and must be an integer"}), 400
+    
+    if feedback_status not in [0, 1, 2]:
+        return jsonify({"error": "feedback_status must be 0 (none), 1 (thumbs up), or 2 (thumbs down)"}), 400
+    
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Verify that this turn belongs to the user
+            cur.execute("""
+                SELECT CT.conversation_id, CT.ordinal
+                FROM public.conversation_turns CT
+                INNER JOIN public.conversations C ON CT.conversation_id = C.id
+                INNER JOIN public.conversations_users CU ON C.tavus_conversation_id = CU.tavus_conversation_id
+                INNER JOIN public.users U ON CU.user_id = U.id
+                WHERE CT.conversation_id = %s AND CT.ordinal = %s AND U.user_email = %s
+            """, (conversation_id, ordinal, user_email))
+            
+            if not cur.fetchone():
+                app.logger.warning(f"⚠️  feedback: Turn (conversation={conversation_id}, ordinal={ordinal}) not found or not owned by {user_email}")
+                return jsonify({"error": "Turn not found or unauthorized"}), 404
+            
+            # Update feedback
+            cur.execute("""
+                UPDATE public.conversation_turns
+                SET feedback_status = %s, feedback = %s
+                WHERE conversation_id = %s AND ordinal = %s
+            """, (feedback_status, feedback, conversation_id, ordinal))
+            
+            conn.commit()
+            
+            app.logger.info(f"✅ feedback: Saved for turn (conversation={conversation_id}, ordinal={ordinal}) by {user_email} (status={feedback_status})")
+            
+            return jsonify({"success": True, "conversation_id": conversation_id, "ordinal": ordinal}), 200
+            
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        app.logger.error(f"❌ feedback: Error saving: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            db_pool.putconn(conn)
 
 # Database Endpoints
 @app.get("/persona-test-types")

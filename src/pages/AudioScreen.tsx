@@ -14,7 +14,7 @@ const AudioScreen = () => {
 
   return (
     <div className="min-h-screen bg-gradient-bg">
-      <div className="max-w-5xl mx-auto p-4 space-y-6">
+      <div className="max-w-6xl mx-auto p-4 space-y-6">
         {/* Header */}
         <div className="text-center py-6">
           <div className="flex items-center justify-center gap-2 mb-2">
@@ -31,9 +31,9 @@ const AudioScreen = () => {
           </Badge>
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Main Voice Call Panel */}
-          <div className="lg:col-span-2">
+        <div className="grid lg:grid-cols-4 gap-6">
+          {/* Main Voice Call Panel and Transcript */}
+          <div className="lg:col-span-3">
             <LegacyVoiceCallPanel />
           </div>
 
