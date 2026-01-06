@@ -1132,48 +1132,58 @@ def save_turn_feedback(user_payload):
         return jsonify({"error": "Database not configured"}), 500
     
     data = request.get_json()
-    conversation_id = data.get('conversation_id')
-    ordinal = data.get('ordinal')
-    feedback_status = data.get('feedback_status')
+    
+    # Defensive type conversion
+    try:
+        # conversation_id might be a UUID string or an integer ID
+        conversation_id = data.get('conversation_id')
+        ordinal = int(data.get('ordinal'))
+        feedback_status = int(data.get('feedback_status', 0))
+    except (TypeError, ValueError) as e:
+        app.logger.warning(f"⚠️  feedback: Invalid data types in request: {e}")
+        return jsonify({"error": "ordinal and feedback_status must be integers"}), 400
+        
+    if not conversation_id:
+        return jsonify({"error": "conversation_id is required"}), 400
+        
     feedback = data.get('feedback', '')
     
-    if not conversation_id or not isinstance(conversation_id, int):
-        return jsonify({"error": "conversation_id is required and must be an integer"}), 400
-    
-    if ordinal is None or not isinstance(ordinal, int):
-        return jsonify({"error": "ordinal is required and must be an integer"}), 400
-    
     if feedback_status not in [0, 1, 2]:
-        return jsonify({"error": "feedback_status must be 0 (none), 1 (thumbs up), or 2 (thumbs down)"}), 400
+        return jsonify({"error": "feedback_status must be 0, 1, or 2"}), 400
     
     conn = None
     try:
         conn = db_pool.getconn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Verify that this turn belongs to the user
+            # We use a simpler check: does the conversation belong to the user?
+            app.logger.info(f"🔍 feedback: Verifying ownership for conv={conversation_id} user={user_email}")
             cur.execute("""
-                SELECT CT.conversation_id, CT.ordinal
-                FROM public.conversation_turns CT
-                INNER JOIN public.conversations C ON CT.conversation_id = C.id
+                SELECT 1
+                FROM public.conversations C
                 INNER JOIN public.conversations_users CU ON C.tavus_conversation_id = CU.tavus_conversation_id
                 INNER JOIN public.users U ON CU.user_id = U.id
-                WHERE CT.conversation_id = %s AND CT.ordinal = %s AND U.user_email = %s
-            """, (conversation_id, ordinal, user_email))
+                WHERE C.id = %s AND U.user_email = %s
+            """, (conversation_id, user_email))
             
             if not cur.fetchone():
-                app.logger.warning(f"⚠️  feedback: Turn (conversation={conversation_id}, ordinal={ordinal}) not found or not owned by {user_email}")
-                return jsonify({"error": "Turn not found or unauthorized"}), 404
+                app.logger.warning(f"⚠️  feedback: Conversation {conversation_id} not found or not owned by {user_email}")
+                return jsonify({"error": "Unauthorized: You do not own this conversation"}), 403
             
             # Update feedback
+            app.logger.info(f"💾 feedback: Updating turn {conversation_id}-{ordinal} with status={feedback_status}")
             cur.execute("""
                 UPDATE public.conversation_turns
                 SET feedback_status = %s, feedback = %s
                 WHERE conversation_id = %s AND ordinal = %s
             """, (feedback_status, feedback, conversation_id, ordinal))
             
+            if cur.rowcount == 0:
+                app.logger.warning(f"⚠️  feedback: No rows updated for turn {conversation_id}-{ordinal}")
+                return jsonify({"error": "Turn not found"}), 404
+                
             conn.commit()
-            
-            app.logger.info(f"✅ feedback: Saved for turn (conversation={conversation_id}, ordinal={ordinal}) by {user_email} (status={feedback_status})")
+            app.logger.info(f"✅ feedback: Successfully saved for {user_email}")
             
             return jsonify({"success": True, "conversation_id": conversation_id, "ordinal": ordinal}), 200
             

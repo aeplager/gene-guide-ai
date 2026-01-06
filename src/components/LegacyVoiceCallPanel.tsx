@@ -34,7 +34,7 @@ const LegacyVoiceCallPanel = () => {
   
   // State for live transcript
   const [transcript, setTranscript] = useState<Array<{
-    conversation_id: number;
+    conversation_id: number | string;
     ordinal: number;
     role: string;
     content: string | { text?: string; topic_id?: string; [key: string]: any };
@@ -44,7 +44,7 @@ const LegacyVoiceCallPanel = () => {
   }>>([]);
   
   // State for feedback management (key is "conversationId-ordinal")
-  const [feedbackChanges, setFeedbackChanges] = useState<Record<string, { status: number; text: string; conversation_id: number; ordinal: number }>>({});
+  const [feedbackChanges, setFeedbackChanges] = useState<Record<string, { status: number; text: string; conversation_id: number | string; ordinal: number }>>({});
   const [savingFeedback, setSavingFeedback] = useState(false);
   const transcriptPollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
@@ -208,7 +208,7 @@ const LegacyVoiceCallPanel = () => {
   };
 
   // Handle feedback changes
-  const handleFeedbackStatus = (conversationId: number, ordinal: number, status: number) => {
+  const handleFeedbackStatus = (conversationId: number | string, ordinal: number, status: number) => {
     const key = `${conversationId}-${ordinal}`;
     setFeedbackChanges(prev => ({
       ...prev,
@@ -221,7 +221,7 @@ const LegacyVoiceCallPanel = () => {
     }));
   };
 
-  const handleFeedbackText = (conversationId: number, ordinal: number, text: string) => {
+  const handleFeedbackText = (conversationId: number | string, ordinal: number, text: string) => {
     const key = `${conversationId}-${ordinal}`;
     setFeedbackChanges(prev => ({
       ...prev,
@@ -235,6 +235,7 @@ const LegacyVoiceCallPanel = () => {
   };
 
   // Save all feedback changes
+  // Save all feedback changes
   const saveFeedback = async () => {
     const token = localStorage.getItem("auth_token");
     if (!token) {
@@ -243,40 +244,51 @@ const LegacyVoiceCallPanel = () => {
     }
 
     setSavingFeedback(true);
+    console.log("[Feedback] Starting save process for", Object.keys(feedbackChanges).length, "items");
     
     try {
-      // Save each feedback change
-      const promises = Object.values(feedbackChanges).map((feedback) =>
-        fetch(`${backendBase}/conversations/turn-feedback`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            conversation_id: feedback.conversation_id,
-            ordinal: feedback.ordinal,
-            feedback_status: feedback.status,
-            feedback: feedback.text,
-          }),
+      // Save each feedback change and check for success
+      const results = await Promise.all(
+        Object.values(feedbackChanges).map(async (feedback) => {
+          console.log(`[Feedback] 📡 Sending turn ${feedback.conversation_id}-${feedback.ordinal}:`, feedback);
+          const response = await fetch(`${backendBase}/conversations/turn-feedback`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              conversation_id: feedback.conversation_id,
+              ordinal: feedback.ordinal,
+              feedback_status: feedback.status,
+              feedback: feedback.text,
+            }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[Feedback] ❌ Server rejected turn ${feedback.conversation_id}-${feedback.ordinal}:`, errorText);
+            throw new Error(`Failed to save: ${errorText}`);
+          }
+          return response.json();
         })
       );
 
-      await Promise.all(promises);
+      console.log("[Feedback] ✅ All items saved successfully:", results);
       
-      // Clear changes and refresh transcript
+      // Clear changes only on success
       setFeedbackChanges({});
       await fetchTranscript();
       
       toast({ 
         title: "Feedback Saved", 
-        description: `${Object.keys(feedbackChanges).length} feedback(s) saved successfully` 
+        description: `${results.length} feedback(s) saved successfully` 
       });
-    } catch (error) {
-      console.error("[Feedback] Save error:", error);
+    } catch (error: any) {
+      console.error("[Feedback] ❌ Save error:", error);
       toast({ 
-        title: "Error", 
-        description: "Failed to save feedback", 
+        title: "Error Saving Feedback", 
+        description: error.message || "Please check console for details", 
         variant: "destructive" 
       });
     } finally {
