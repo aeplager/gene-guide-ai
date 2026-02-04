@@ -1,6 +1,7 @@
 """
 Genetic Web Scraper - Standalone scraper for ClinVar and MedlinePlus
 No database dependencies - just returns the fetched data as dictionaries.
+Outputs markdown-formatted text for better readability and LLM parsing.
 """
 import os
 import re
@@ -9,6 +10,7 @@ import urllib.parse
 from typing import Dict, List, Optional
 import requests
 from bs4 import BeautifulSoup
+from markdownify import markdownify as md
 
 
 # ==================== CONFIGURATION ====================
@@ -147,15 +149,25 @@ def search_clinvar(gene: str, mutation: str) -> Dict:
                 soup.select_one("#content") or 
                 soup.find("body"))
     
-    paragraphs = []
-    for element in container.find_all(["h1", "h2", "h3", "h4", "p", "li", "dd", "dt"]):
-        text = element.get_text(separator=" ").strip()
-        if text:
-            paragraphs.append(text)
-        if len(paragraphs) > 500:  # Limit to prevent huge documents
-            break
+    # Convert HTML to Markdown for better formatting
+    # This preserves headings, lists, bold, italic, and links
+    markdown_text = md(
+        str(container),
+        heading_style="ATX",  # Use # for headings
+        bullets="-",  # Use - for bullet lists
+        strip=["script", "style", "img"],  # Remove these tags
+        escape_asterisks=False,  # Keep markdown bold/italic
+        escape_underscores=False
+    )
     
-    full_text = "\n\n".join(paragraphs)
+    # Clean up excessive whitespace while preserving structure
+    lines = [line.strip() for line in markdown_text.split('\n')]
+    lines = [line for line in lines if line]  # Remove empty lines
+    full_text = '\n\n'.join(lines)
+    
+    # Limit size to prevent huge documents
+    if len(full_text) > 50000:  # ~50KB limit
+        full_text = full_text[:50000] + "\n\n[Content truncated for length]"
     
     # Extract classification
     classification = None
@@ -235,23 +247,43 @@ def search_medlineplus(gene: str) -> Dict:
     for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
         tag.decompose()
     
-    # Extract paragraphs from main content
-    paragraphs = []
-    for p in (soup.select("main p, article p, .section p") or soup.find_all("p")):
-        text = p.get_text(" ", strip=True)
-        if text and len(text) > 20:  # Filter out very short text
-            paragraphs.append(text)
+    # Extract main content container
+    main_content = soup.select_one("main") or soup.select_one("article") or soup.find("body")
     
-    full_text = "\n\n".join(paragraphs)
-    
-    if not full_text:
+    if not main_content:
         return {
             "error": f"No content found for gene {gene}",
             "url": url,
             "source": "MedlinePlus"
         }
     
-    print(f"[MedlinePlus] Success - {len(paragraphs)} paragraphs")
+    # Convert HTML to Markdown
+    markdown_text = md(
+        str(main_content),
+        heading_style="ATX",
+        bullets="-",
+        strip=["script", "style", "img"],
+        escape_asterisks=False,
+        escape_underscores=False
+    )
+    
+    # Clean up excessive whitespace
+    lines = [line.strip() for line in markdown_text.split('\n')]
+    lines = [line for line in lines if line and len(line) > 10]  # Filter very short lines
+    full_text = '\n\n'.join(lines)
+    
+    if not full_text or len(full_text) < 100:
+        return {
+            "error": f"No meaningful content found for gene {gene}",
+            "url": url,
+            "source": "MedlinePlus"
+        }
+    
+    # Limit size
+    if len(full_text) > 50000:
+        full_text = full_text[:50000] + "\n\n[Content truncated for length]"
+    
+    print(f"[MedlinePlus] Success - {len(full_text)} characters of markdown")
     
     return {
         "title": title,
@@ -290,19 +322,31 @@ def search_all_sources(gene: str, mutation: str) -> Dict:
     clinvar_result = search_clinvar(gene, mutation)
     medlineplus_result = search_medlineplus(gene)
     
-    # Combine results
+    # Combine results with markdown formatting
     combined_parts = []
     sources_used = []
     
     if "error" not in clinvar_result:
-        combined_parts.append(f"=== ClinVar Data ===\nURL: {clinvar_result['url']}\n\n{clinvar_result['text']}")
+        combined_parts.append(f"""# ClinVar Data
+
+**Source URL**: {clinvar_result['url']}
+
+---
+
+{clinvar_result['text']}""")
         sources_used.append("ClinVar")
     
     if "error" not in medlineplus_result:
-        combined_parts.append(f"=== MedlinePlus Genetics Data ===\nURL: {medlineplus_result['url']}\n\n{medlineplus_result['text']}")
+        combined_parts.append(f"""# MedlinePlus Genetics Data
+
+**Source URL**: {medlineplus_result['url']}
+
+---
+
+{medlineplus_result['text']}""")
         sources_used.append("MedlinePlus")
     
-    combined_text = "\n\n" + ("="*80) + "\n\n".join(combined_parts)
+    combined_text = "\n\n---\n\n".join(combined_parts)
     
     return {
         "clinvar": clinvar_result,

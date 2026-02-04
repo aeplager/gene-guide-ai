@@ -2350,6 +2350,72 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
         if conn:
             db_pool.putconn(conn)
 
+@app.get("/source-documentation")
+@jwt_required()
+def get_source_documentation(user_payload):
+    """
+    Fetch source documentation (ClinVar + MedlinePlus) for the authenticated user
+    Returns markdown-formatted text from the database
+    """
+    user_id = user_payload.get('sub')
+    if not user_id:
+        return jsonify({"error": "unauthorized", "message": "User ID not found in token"}), 401
+    
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch source documentation and metadata
+            cur.execute('''
+                SELECT 
+                    bi.gene,
+                    bi.mutation,
+                    ct.classification_type,
+                    bi.source_document,
+                    bi.source_url,
+                    bi.source_retrieved_at
+                FROM gencom.base_information bi
+                LEFT JOIN gencom.classification_type ct 
+                    ON bi.classification_type_id = ct.classification_type_id
+                WHERE bi.user_id = %s
+            ''', (user_id,))
+            
+            result = cur.fetchone()
+            
+            if not result:
+                return jsonify({
+                    "error": "not_found",
+                    "message": "No genetic information found for this user"
+                }), 404
+            
+            source_document = result.get("source_document")
+            
+            if not source_document:
+                return jsonify({
+                    "error": "no_documentation",
+                    "message": "Source documentation has not been fetched yet. Please save your genetic data first.",
+                    "gene": result.get("gene"),
+                    "mutation": result.get("mutation")
+                }), 404
+            
+            app.logger.info(f"📚 source_documentation:fetched user_id={user_id} doc_length={len(source_document)}")
+            
+            return jsonify({
+                "gene": result.get("gene"),
+                "mutation": result.get("mutation"),
+                "classification": result.get("classification_type"),
+                "source_document": source_document,
+                "source_url": result.get("source_url"),
+                "source_retrieved_at": result.get("source_retrieved_at").isoformat() if result.get("source_retrieved_at") else None
+            }), 200
+            
+    except Exception as e:
+        app.logger.exception(f"❌ source_documentation:error {type(e).__name__}: {e}")
+        return jsonify({"error": "fetch_failed", "message": str(e)}), 500
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+
 if __name__ == "__main__":
     app.run(port=8081, debug=True)
 

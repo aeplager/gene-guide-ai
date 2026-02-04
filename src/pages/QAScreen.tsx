@@ -6,6 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { 
   MessageCircle, 
   Send, 
@@ -18,7 +22,8 @@ import {
   PhoneOff,
   ThumbsUp,
   ThumbsDown,
-  Save
+  Save,
+  FileText
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useWarmLLM } from "@/hooks/useWarmLLM";
@@ -68,6 +73,18 @@ const QAScreen = () => {
   const [feedbackChanges, setFeedbackChanges] = useState<Record<string, { status: number; text: string; conversation_id: number | string; ordinal: number }>>({});
   const [savingFeedback, setSavingFeedback] = useState(false);
   const transcriptPollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // State for source documentation viewer
+  const [sourceDocOpen, setSourceDocOpen] = useState(false);
+  const [sourceDocData, setSourceDocData] = useState<{
+    gene: string;
+    mutation: string;
+    classification: string;
+    source_document: string;
+    source_url: string;
+    source_retrieved_at: string | null;
+  } | null>(null);
+  const [loadingSourceDoc, setLoadingSourceDoc] = useState(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -560,6 +577,49 @@ const QAScreen = () => {
     });
   };
 
+  const fetchSourceDocumentation = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      toast({ 
+        title: "Error", 
+        description: "Not authenticated", 
+        variant: "destructive" 
+      });
+      return;
+    }
+
+    setLoadingSourceDoc(true);
+    try {
+      const response = await fetch(`${backendBase}/source-documentation`, {
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSourceDocData(data);
+        setSourceDocOpen(true);
+      } else {
+        const errorData = await response.json();
+        toast({
+          title: "Documentation Not Available",
+          description: errorData.message || "Source documentation could not be loaded.",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
+      console.error("[SourceDoc] Fetch error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load source documentation",
+        variant: "destructive"
+      });
+    } finally {
+      setLoadingSourceDoc(false);
+    }
+  };
+
   const suggestedQuestions = [
     "What does this mean for my children?",
     "What screening should I get?",
@@ -894,6 +954,17 @@ const QAScreen = () => {
                 <Button
                   variant="outline"
                   className="w-full justify-start items-center h-auto py-3"
+                  onClick={fetchSourceDocumentation}
+                  disabled={loadingSourceDoc}
+                >
+                  <FileText className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">
+                    {loadingSourceDoc ? "Loading..." : "View Source Documentation"}
+                  </span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
                   onClick={handleExportConversation}
                 >
                   <Download className="h-4 w-4 mr-2 flex-shrink-0" />
@@ -933,6 +1004,41 @@ const QAScreen = () => {
                 </Button>
               </CardContent>
             </Card>
+
+            {/* Source Documentation Dialog */}
+            <Dialog open={sourceDocOpen} onOpenChange={setSourceDocOpen}>
+              <DialogContent className="max-w-4xl max-h-[80vh]">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <FileText className="h-5 w-5" />
+                    Source Documentation
+                  </DialogTitle>
+                  <DialogDescription>
+                    {sourceDocData && (
+                      <div className="space-y-1 text-sm">
+                        <p><strong>Gene:</strong> {sourceDocData.gene}</p>
+                        <p><strong>Mutation:</strong> {sourceDocData.mutation}</p>
+                        <p><strong>Classification:</strong> {sourceDocData.classification}</p>
+                        {sourceDocData.source_retrieved_at && (
+                          <p className="text-xs text-muted-foreground">
+                            Retrieved: {new Date(sourceDocData.source_retrieved_at).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </DialogDescription>
+                </DialogHeader>
+                <ScrollArea className="h-[60vh] w-full rounded-md border p-4">
+                  {sourceDocData && (
+                    <div className="prose prose-sm max-w-none dark:prose-invert">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {sourceDocData.source_document}
+                      </ReactMarkdown>
+                    </div>
+                  )}
+                </ScrollArea>
+              </DialogContent>
+            </Dialog>
 
             {/* Disclaimer */}
             <Card className="bg-secondary border-l-4 border-primary">
