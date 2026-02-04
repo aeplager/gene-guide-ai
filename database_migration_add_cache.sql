@@ -1,78 +1,78 @@
--- Add caching columns to BaseInformation table
+-- Add caching columns to base_information table
 -- This allows storing the LLM-generated analysis to avoid regenerating it on every page load
 -- Split into two caches: Basic (fast) and Detailed (slower but comprehensive)
 
 -- Check if columns exist before adding (safe for re-running)
 DO $$ 
 BEGIN
-    -- Add CachedAnalysis column (stores full JSON text - legacy/backward compatibility)
+    -- Add cached_analysis column (stores full JSON text - legacy/backward compatibility)
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
-        WHERE table_schema = 'GenCom' 
-        AND table_name = 'BaseInformation' 
-        AND column_name = 'CachedAnalysis'
+        WHERE table_schema = 'gencom' 
+        AND table_name = 'base_information' 
+        AND column_name = 'cached_analysis'
     ) THEN
-        ALTER TABLE "GenCom"."BaseInformation" 
-        ADD COLUMN "CachedAnalysis" TEXT NULL;
+        ALTER TABLE gencom.base_information 
+        ADD COLUMN cached_analysis TEXT NULL;
         
-        RAISE NOTICE 'Added CachedAnalysis column';
+        RAISE NOTICE 'Added cached_analysis column';
     ELSE
-        RAISE NOTICE 'CachedAnalysis column already exists';
+        RAISE NOTICE 'cached_analysis column already exists';
     END IF;
     
-    -- Add CachedAnalysisBasic column (stores basic info: condition, riskLevel, description)
+    -- Add cached_analysis_basic column (stores basic info: condition, riskLevel, description)
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
-        WHERE table_schema = 'GenCom' 
-        AND table_name = 'BaseInformation' 
-        AND column_name = 'CachedAnalysisBasic'
+        WHERE table_schema = 'gencom' 
+        AND table_name = 'base_information' 
+        AND column_name = 'cached_analysis_basic'
     ) THEN
-        ALTER TABLE "GenCom"."BaseInformation" 
-        ADD COLUMN "CachedAnalysisBasic" TEXT NULL;
+        ALTER TABLE gencom.base_information 
+        ADD COLUMN cached_analysis_basic TEXT NULL;
         
-        RAISE NOTICE 'Added CachedAnalysisBasic column';
+        RAISE NOTICE 'Added cached_analysis_basic column';
     ELSE
-        RAISE NOTICE 'CachedAnalysisBasic column already exists';
+        RAISE NOTICE 'cached_analysis_basic column already exists';
     END IF;
     
-    -- Add CachedAnalysisDetailed column (stores detailed info: implications, recommendations, resources)
+    -- Add cached_analysis_detailed column (stores detailed info: implications, recommendations, resources)
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
-        WHERE table_schema = 'GenCom' 
-        AND table_name = 'BaseInformation' 
-        AND column_name = 'CachedAnalysisDetailed'
+        WHERE table_schema = 'gencom' 
+        AND table_name = 'base_information' 
+        AND column_name = 'cached_analysis_detailed'
     ) THEN
-        ALTER TABLE "GenCom"."BaseInformation" 
-        ADD COLUMN "CachedAnalysisDetailed" TEXT NULL;
+        ALTER TABLE gencom.base_information 
+        ADD COLUMN cached_analysis_detailed TEXT NULL;
         
-        RAISE NOTICE 'Added CachedAnalysisDetailed column';
+        RAISE NOTICE 'Added cached_analysis_detailed column';
     ELSE
-        RAISE NOTICE 'CachedAnalysisDetailed column already exists';
+        RAISE NOTICE 'cached_analysis_detailed column already exists';
     END IF;
     
-    -- Add AnalysisCachedAt column (stores cache timestamp)
+    -- Add analysis_cached_at column (stores cache timestamp)
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
-        WHERE table_schema = 'GenCom' 
-        AND table_name = 'BaseInformation' 
-        AND column_name = 'AnalysisCachedAt'
+        WHERE table_schema = 'gencom' 
+        AND table_name = 'base_information' 
+        AND column_name = 'analysis_cached_at'
     ) THEN
-        ALTER TABLE "GenCom"."BaseInformation" 
-        ADD COLUMN "AnalysisCachedAt" TIMESTAMP WITH TIME ZONE NULL;
+        ALTER TABLE gencom.base_information 
+        ADD COLUMN analysis_cached_at TIMESTAMP WITH TIME ZONE NULL;
         
-        RAISE NOTICE 'Added AnalysisCachedAt column';
+        RAISE NOTICE 'Added analysis_cached_at column';
     ELSE
-        RAISE NOTICE 'AnalysisCachedAt column already exists';
+        RAISE NOTICE 'analysis_cached_at column already exists';
     END IF;
 END $$;
 
 -- Create index for faster cache lookups
 CREATE INDEX IF NOT EXISTS idx_base_information_cached_at 
-ON "GenCom"."BaseInformation"("AnalysisCachedAt") 
-WHERE "CachedAnalysis" IS NOT NULL;
+ON gencom.base_information(analysis_cached_at) 
+WHERE cached_analysis IS NOT NULL;
 
-COMMENT ON COLUMN "GenCom"."BaseInformation"."CachedAnalysis" IS 'JSON cache of LLM-generated condition analysis (expires after 7 days)';
-COMMENT ON COLUMN "GenCom"."BaseInformation"."AnalysisCachedAt" IS 'Timestamp when analysis was cached (UTC)';
+COMMENT ON COLUMN gencom.base_information.cached_analysis IS 'JSON cache of LLM-generated condition analysis (expires after 7 days)';
+COMMENT ON COLUMN gencom.base_information.analysis_cached_at IS 'Timestamp when analysis was cached (UTC)';
 
 SELECT 'Migration complete!' AS status;
 

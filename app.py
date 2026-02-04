@@ -495,28 +495,28 @@ def tavus_start(user_payload):
                 # Fetch base information and analysis
                 cur.execute('''
                     SELECT 
-                        bi."Gene",
-                        bi."Mutation",
-                        ct."ClassificationType",
-                        bi."CachedAnalysisBasic"
-                    FROM "GenCom"."BaseInformation" bi
-                    LEFT JOIN "GenCom"."ClassificationType" ct 
-                        ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
-                    WHERE bi."UserID" = %s
+                        bi.gene,
+                        bi.mutation,
+                        ct.classification_type,
+                        bi.cached_analysis_basic
+                    FROM gencom.base_information bi
+                    LEFT JOIN gencom.classification_type ct 
+                        ON bi.classification_type_id = ct.classification_type_id
+                    WHERE bi.user_id = %s
                 ''', (jwt_user_id,))
                 
                 result = cur.fetchone()
                 if result:
-                    gene = result.get("Gene", "").strip()
-                    mutation = result.get("Mutation", "").strip()
-                    classification = result.get("ClassificationType", "").strip()
+                    gene = result.get("gene", "").strip()
+                    mutation = result.get("mutation", "").strip()
+                    classification = result.get("classification_type", "").strip()
                     
                     # Parse cached analysis for condition and description
                     condition = None
                     description = None
-                    if result.get("CachedAnalysisBasic"):
+                    if result.get("cached_analysis_basic"):
                         try:
-                            cached = json.loads(result["CachedAnalysisBasic"])
+                            cached = json.loads(result["cached_analysis_basic"])
                             condition = cached.get("condition")
                             description = cached.get("description")
                         except json.JSONDecodeError:
@@ -571,10 +571,10 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                                 # Cache the result for future use
                                 cache_json = json.dumps(basic_data)
                                 cur.execute('''
-                                    UPDATE "GenCom"."BaseInformation"
-                                    SET "CachedAnalysisBasic" = %s,
-                                        "AnalysisCachedAt" = (now() at time zone 'utc')
-                                    WHERE "UserID" = %s
+                                    UPDATE gencom.base_information
+                                    SET cached_analysis_basic = %s,
+                                        analysis_cached_at = (now() at time zone 'utc')
+                                    WHERE user_id = %s
                                 ''', (cache_json, jwt_user_id))
                                 conn.commit()
                                 
@@ -826,28 +826,28 @@ def vapi_start(user_payload):
                 # Fetch base information and analysis
                 cur.execute('''
                     SELECT 
-                        bi."Gene",
-                        bi."Mutation",
-                        ct."ClassificationType",
-                        bi."CachedAnalysisBasic"
-                    FROM "GenCom"."BaseInformation" bi
-                    LEFT JOIN "GenCom"."ClassificationType" ct 
-                        ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
-                    WHERE bi."UserID" = %s
+                        bi.gene,
+                        bi.mutation,
+                        ct.classification_type,
+                        bi.cached_analysis_basic
+                    FROM gencom.base_information bi
+                    LEFT JOIN gencom.classification_type ct 
+                        ON bi.classification_type_id = ct.classification_type_id
+                    WHERE bi.user_id = %s
                 ''', (jwt_user_id,))
                 
                 result = cur.fetchone()
                 if result:
-                    gene = result.get("Gene", "").strip()
-                    mutation = result.get("Mutation", "").strip()
-                    classification = result.get("ClassificationType", "").strip()
+                    gene = result.get("gene", "").strip()
+                    mutation = result.get("mutation", "").strip()
+                    classification = result.get("classification_type", "").strip()
                     
                     # Parse cached analysis for condition and description
                     condition = None
                     description = None
-                    if result.get("CachedAnalysisBasic"):
+                    if result.get("cached_analysis_basic"):
                         try:
-                            cached = json.loads(result["CachedAnalysisBasic"])
+                            cached = json.loads(result["cached_analysis_basic"])
                             condition = cached.get("condition")
                             description = cached.get("description")
                         except json.JSONDecodeError:
@@ -902,10 +902,10 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                                 # Cache the result for future use
                                 cache_json = json.dumps(basic_data)
                                 cur.execute('''
-                                    UPDATE "GenCom"."BaseInformation"
-                                    SET "CachedAnalysisBasic" = %s,
-                                        "AnalysisCachedAt" = (now() at time zone 'utc')
-                                    WHERE "UserID" = %s
+                                    UPDATE gencom.base_information
+                                    SET cached_analysis_basic = %s,
+                                        analysis_cached_at = (now() at time zone 'utc')
+                                    WHERE user_id = %s
                                 ''', (cache_json, jwt_user_id))
                                 conn.commit()
                                 
@@ -1214,17 +1214,26 @@ def get_persona_test_types():
         query_start = datetime.now(timezone.utc)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute('''
-                SELECT "PersonaTestTypeID", "PersonaTestType"
-                FROM "GenCom"."PersonaTestType"
-                ORDER BY "PersonaTestType"
+                SELECT persona_test_type_id, persona_test_type
+                FROM gencom.persona_test_type
+                ORDER BY persona_test_type
             ''')
             results = cur.fetchall()
         query_time = (datetime.now(timezone.utc) - query_start).total_seconds()
         
+        # Transform snake_case keys to PascalCase for frontend compatibility
+        transformed_results = [
+            {
+                "PersonaTestTypeID": row["persona_test_type_id"],
+                "PersonaTestType": row["persona_test_type"]
+            }
+            for row in results
+        ]
+        
         total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
         app.logger.info(f"✅ persona-test-types:success conn={db_conn_time:.3f}s query={query_time:.3f}s total={total_time:.3f}s")
         
-        return jsonify([dict(row) for row in results]), 200
+        return jsonify(transformed_results), 200
     except Exception as e:
         total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
         app.logger.exception(f"❌ get_persona_test_types:error {str(e)} total={total_time:.3f}s")
@@ -1250,17 +1259,26 @@ def get_classification_types():
         query_start = datetime.now(timezone.utc)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute('''
-                SELECT "ClassificationTypeID", "ClassificationType"
-                FROM "GenCom"."ClassificationType"
-                ORDER BY "ClassificationType"
+                SELECT classification_type_id, classification_type
+                FROM gencom.classification_type
+                ORDER BY classification_type
             ''')
             results = cur.fetchall()
         query_time = (datetime.now(timezone.utc) - query_start).total_seconds()
         
+        # Transform snake_case keys to PascalCase for frontend compatibility
+        transformed_results = [
+            {
+                "ClassificationTypeID": row["classification_type_id"],
+                "ClassificationType": row["classification_type"]
+            }
+            for row in results
+        ]
+        
         total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
         app.logger.info(f"✅ classification-types:success conn={db_conn_time:.3f}s query={query_time:.3f}s total={total_time:.3f}s")
         
-        return jsonify([dict(row) for row in results]), 200
+        return jsonify(transformed_results), 200
     except Exception as e:
         total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
         app.logger.exception(f"❌ get_classification_types:error {str(e)} total={total_time:.3f}s")
@@ -1314,7 +1332,7 @@ def save_base_information():
         conn = db_pool.getconn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Check if record exists
-            check_sql = 'SELECT "UserID" FROM "GenCom"."BaseInformation" WHERE "UserID" = %s'
+            check_sql = 'SELECT user_id FROM gencom.base_information WHERE user_id = %s'
             app.logger.info("🔍 CHECK SQL: %s", check_sql)
             app.logger.info("🔍 CHECK PARAMS: (%s,)", user_id)
             
@@ -1330,18 +1348,18 @@ def save_base_information():
             
             if exists:
                 # Update existing record and clear cached analysis (will regenerate on next visit)
-                update_sql = '''UPDATE "GenCom"."BaseInformation"
-                    SET "PersonaTestTypeID" = %s,
-                        "ClassificationTypeID" = %s,
-                        "Uploaded" = %s::bit(1),
-                        "Gene" = %s,
-                        "Mutation" = %s,
-                        "ModifiedDate" = %s,
-                        "CachedAnalysisBasic" = NULL,
-                        "CachedAnalysisDetailed" = NULL,
-                        "AnalysisCachedAt" = NULL
-                    WHERE "UserID" = %s
-                    RETURNING "UserID"'''
+                update_sql = '''UPDATE gencom.base_information
+                    SET persona_test_type_id = %s,
+                        classification_type_id = %s,
+                        uploaded = %s::bit(1),
+                        gene = %s,
+                        mutation = %s,
+                        modified_date = %s,
+                        cached_analysis_basic = NULL,
+                        cached_analysis_detailed = NULL,
+                        analysis_cached_at = NULL
+                    WHERE user_id = %s
+                    RETURNING user_id'''
                 update_params = (persona_test_type_id, classification_type_id, uploaded_bit, gene, mutation, now, user_id)
                 
                 app.logger.info("🗑️  Clearing cached analysis - genetic data changed")
@@ -1365,10 +1383,10 @@ def save_base_information():
                 app.logger.info("✅ base_information:updated user_id=%s gene=%s uploaded=%s", user_id, gene, uploaded_bit)
             else:
                 # Insert new record (cache fields will be NULL, analysis will generate on first visit)
-                insert_sql = '''INSERT INTO "GenCom"."BaseInformation"
-                    ("UserID", "PersonaTestTypeID", "ClassificationTypeID", "Uploaded", "Gene", "Mutation", "InsertDate", "ModifiedDate")
+                insert_sql = '''INSERT INTO gencom.base_information
+                    (user_id, persona_test_type_id, classification_type_id, uploaded, gene, mutation, insert_date, modified_date)
                     VALUES (%s, %s, %s, %s::bit(1), %s, %s, %s, %s)
-                    RETURNING "UserID"'''
+                    RETURNING user_id'''
                 insert_params = (user_id, persona_test_type_id, classification_type_id, uploaded_bit, gene, mutation, now, now)
                 
                 app.logger.info("ℹ️  Cache will be generated on first visit to /conditions page")
@@ -1396,12 +1414,12 @@ def save_base_information():
             
             # Fetch classification type name for the background job
             cur.execute('''
-                SELECT "ClassificationType"
-                FROM "GenCom"."ClassificationType"
-                WHERE "ClassificationTypeID" = %s
+                SELECT classification_type
+                FROM gencom.classification_type
+                WHERE classification_type_id = %s
             ''', (classification_type_id,))
             classification_row = cur.fetchone()
-            classification_name = classification_row["ClassificationType"] if classification_row else "Unknown"
+            classification_name = classification_row["classification_type"] if classification_row else "Unknown"
             
             # Trigger async background job to pre-generate basic analysis
             # This way, by the time user navigates to /conditions, cache is ready!
@@ -1461,10 +1479,10 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         try:
                             with bg_conn.cursor() as bg_cur:
                                 bg_cur.execute('''
-                                    UPDATE "GenCom"."BaseInformation"
-                                    SET "CachedAnalysisBasic" = %s,
-                                        "AnalysisCachedAt" = (now() at time zone 'utc')
-                                    WHERE "UserID" = %s
+                                    UPDATE gencom.base_information
+                                    SET cached_analysis_basic = %s,
+                                        analysis_cached_at = (now() at time zone 'utc')
+                                    WHERE user_id = %s
                                 ''', (basic_json, saved_user_id))
                                 bg_conn.commit()
                             
@@ -1534,9 +1552,9 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         try:
                             with bg_conn_detailed.cursor() as bg_cur_detailed:
                                 bg_cur_detailed.execute('''
-                                    UPDATE "GenCom"."BaseInformation"
-                                    SET "CachedAnalysisDetailed" = %s
-                                    WHERE "UserID" = %s
+                                    UPDATE gencom.base_information
+                                    SET cached_analysis_detailed = %s
+                                    WHERE user_id = %s
                                 ''', (detailed_json, saved_user_id))
                                 bg_conn_detailed.commit()
                             
@@ -1553,7 +1571,7 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
             analysis_thread.start()
             app.logger.info("🚀 Triggered background FULL analysis generation (basic + detailed)")
             
-            return jsonify({"success": True, "userId": result["UserID"]}), 200
+            return jsonify({"success": True, "userId": result["user_id"]}), 200
             
     except Exception as e:
         if conn:
@@ -1593,22 +1611,22 @@ def get_base_information(user_id):
             # Fetch user's existing data with joined table info
             cur.execute('''
                 SELECT 
-                    bi."UserID",
-                    bi."PersonaTestTypeID",
-                    bi."ClassificationTypeID",
-                    bi."Gene",
-                    bi."Mutation",
-                    bi."Uploaded",
-                    bi."CachedAnalysis",
-                    bi."AnalysisCachedAt",
-                    ptt."PersonaTestType",
-                    ct."ClassificationType"
-                FROM "GenCom"."BaseInformation" bi
-                INNER JOIN "GenCom"."PersonaTestType" ptt 
-                    ON bi."PersonaTestTypeID" = ptt."PersonaTestTypeID"
-                INNER JOIN "GenCom"."ClassificationType" ct 
-                    ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
-                WHERE bi."UserID" = %s
+                    bi.user_id,
+                    bi.persona_test_type_id,
+                    bi.classification_type_id,
+                    bi.gene,
+                    bi.mutation,
+                    bi.uploaded,
+                    bi.cached_analysis,
+                    bi.analysis_cached_at,
+                    ptt.persona_test_type,
+                    ct.classification_type
+                FROM gencom.base_information bi
+                INNER JOIN gencom.persona_test_type ptt 
+                    ON bi.persona_test_type_id = ptt.persona_test_type_id
+                INNER JOIN gencom.classification_type ct 
+                    ON bi.classification_type_id = ct.classification_type_id
+                WHERE bi.user_id = %s
                 LIMIT 1
             ''', (user_id,))
             
@@ -1623,16 +1641,16 @@ def get_base_information(user_id):
         # Convert result to JSON-friendly format
         data = {
             "exists": True,
-            "userId": result["UserID"],
-            "personaTestTypeId": result["PersonaTestTypeID"],
-            "personaTestType": result["PersonaTestType"],
-            "classificationTypeId": result["ClassificationTypeID"],
-            "classificationType": result["ClassificationType"],
-            "gene": result["Gene"],
-            "mutation": result["Mutation"],
-            "uploaded": bool(result["Uploaded"]) if result["Uploaded"] is not None else None,
-            "cachedAnalysis": result["CachedAnalysis"],
-            "analysisCachedAt": result["AnalysisCachedAt"].isoformat() if result["AnalysisCachedAt"] else None
+            "userId": result["user_id"],
+            "personaTestTypeId": result["persona_test_type_id"],
+            "personaTestType": result["persona_test_type"],
+            "classificationTypeId": result["classification_type_id"],
+            "classificationType": result["classification_type"],
+            "gene": result["gene"],
+            "mutation": result["mutation"],
+            "uploaded": bool(result["uploaded"]) if result["uploaded"] is not None else None,
+            "cachedAnalysis": result["cached_analysis"],
+            "analysisCachedAt": result["analysis_cached_at"].isoformat() if result["analysis_cached_at"] else None
         }
         
         total_time = (datetime.now(timezone.utc) - start_time).total_seconds()
@@ -1749,13 +1767,13 @@ def get_condition_analysis_basic(user_id):
             # Fetch user's saved genetic information
             cur.execute('''
                 SELECT 
-                    bi."Gene",
-                    bi."Mutation",
-                    ct."ClassificationType"
-                FROM "GenCom"."BaseInformation" bi
-                JOIN "GenCom"."ClassificationType" ct 
-                    ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
-                WHERE bi."UserID" = %s
+                    bi.gene,
+                    bi.mutation,
+                    ct.classification_type
+                FROM gencom.base_information bi
+                JOIN gencom.classification_type ct 
+                    ON bi.classification_type_id = ct.classification_type_id
+                WHERE bi.user_id = %s
             ''', (user_id,))
             
             result = cur.fetchone()
@@ -1764,9 +1782,9 @@ def get_condition_analysis_basic(user_id):
                 app.logger.warning(f"⚠️  No base information found for user_id={user_id}")
                 return jsonify({"error": "no_genetic_data_found", "message": "Please complete the introductory screen first"}), 404
             
-            gene = result["Gene"]
-            mutation = result["Mutation"]
-            classification = result["ClassificationType"]
+            gene = result["gene"]
+            mutation = result["mutation"]
+            classification = result["classification_type"]
             
             # Check if required fields are present
             if not gene or not mutation:
@@ -1777,17 +1795,17 @@ def get_condition_analysis_basic(user_id):
             
             # Check cache for basic info
             cur.execute('''
-                SELECT "CachedAnalysisBasic", "AnalysisCachedAt"
-                FROM "GenCom"."BaseInformation"
-                WHERE "UserID" = %s 
-                  AND "CachedAnalysisBasic" IS NOT NULL
+                SELECT cached_analysis_basic, analysis_cached_at
+                FROM gencom.base_information
+                WHERE user_id = %s 
+                  AND cached_analysis_basic IS NOT NULL
             ''', (user_id,))
             
             cached_result = cur.fetchone()
             
             # Use cache if it exists and is less than 7 days old
-            if cached_result and cached_result.get("CachedAnalysisBasic"):
-                cached_at = cached_result.get("AnalysisCachedAt")
+            if cached_result and cached_result.get("cached_analysis_basic"):
+                cached_at = cached_result.get("analysis_cached_at")
                 
                 # Check if cache is still valid (less than 7 days old)
                 cache_valid = False
@@ -1798,7 +1816,7 @@ def get_condition_analysis_basic(user_id):
                 
                 if cache_valid:
                     try:
-                        cached_data = json.loads(cached_result["CachedAnalysisBasic"])
+                        cached_data = json.loads(cached_result["cached_analysis_basic"])
                         app.logger.info("✅ Returning cached basic analysis (fast path)")
                         return jsonify(cached_data), 200
                     except json.JSONDecodeError:
@@ -1867,10 +1885,10 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         try:
                             cache_json = json.dumps(condition_data)
                             cur.execute('''
-                                UPDATE "GenCom"."BaseInformation"
-                                SET "CachedAnalysisBasic" = %s,
-                                    "AnalysisCachedAt" = (now() at time zone 'utc')
-                                WHERE "UserID" = %s
+                                UPDATE gencom.base_information
+                                SET cached_analysis_basic = %s,
+                                    analysis_cached_at = (now() at time zone 'utc')
+                                WHERE user_id = %s
                             ''', (cache_json, user_id))
                             conn.commit()
                             app.logger.info("💾 Basic analysis cached to database")
@@ -1932,13 +1950,13 @@ def get_condition_analysis_detailed(user_id):
             # Fetch user's saved genetic information
             cur.execute('''
                 SELECT 
-                    bi."Gene",
-                    bi."Mutation",
-                    ct."ClassificationType"
-                FROM "GenCom"."BaseInformation" bi
-                JOIN "GenCom"."ClassificationType" ct 
-                    ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
-                WHERE bi."UserID" = %s
+                    bi.gene,
+                    bi.mutation,
+                    ct.classification_type
+                FROM gencom.base_information bi
+                JOIN gencom.classification_type ct 
+                    ON bi.classification_type_id = ct.classification_type_id
+                WHERE bi.user_id = %s
             ''', (user_id,))
             
             result = cur.fetchone()
@@ -1947,26 +1965,26 @@ def get_condition_analysis_detailed(user_id):
                 app.logger.warning(f"⚠️  No base information found for user_id={user_id}")
                 return jsonify({"error": "no_genetic_data_found", "message": "Please complete the introductory screen first"}), 404
             
-            gene = result["Gene"]
-            mutation = result["Mutation"]
-            classification = result["ClassificationType"]
+            gene = result["gene"]
+            mutation = result["mutation"]
+            classification = result["classification_type"]
             
             app.logger.info(f"📊 Retrieved: gene={gene}, mutation={mutation}, classification={classification}")
             
             # Check cache for detailed info
             cur.execute('''
-                SELECT "CachedAnalysisDetailed"
-                FROM "GenCom"."BaseInformation"
-                WHERE "UserID" = %s 
-                  AND "CachedAnalysisDetailed" IS NOT NULL
+                SELECT cached_analysis_detailed
+                FROM gencom.base_information
+                WHERE user_id = %s 
+                  AND cached_analysis_detailed IS NOT NULL
             ''', (user_id,))
             
             cached_result = cur.fetchone()
             
             # Use cache if it exists
-            if cached_result and cached_result.get("CachedAnalysisDetailed"):
+            if cached_result and cached_result.get("cached_analysis_detailed"):
                 try:
-                    cached_data = json.loads(cached_result["CachedAnalysisDetailed"])
+                    cached_data = json.loads(cached_result["cached_analysis_detailed"])
                     app.logger.info("✅ Returning cached detailed analysis (fast path)")
                     return jsonify(cached_data), 200
                 except json.JSONDecodeError:
@@ -2046,9 +2064,9 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         try:
                             cache_json = json.dumps(condition_data)
                             cur.execute('''
-                                UPDATE "GenCom"."BaseInformation"
-                                SET "CachedAnalysisDetailed" = %s
-                                WHERE "UserID" = %s
+                                UPDATE gencom.base_information
+                                SET cached_analysis_detailed = %s
+                                WHERE user_id = %s
                             ''', (cache_json, user_id))
                             conn.commit()
                             app.logger.info("💾 Detailed analysis cached to database")
@@ -2109,13 +2127,13 @@ def get_condition_analysis(user_id):
             # Fetch user's saved genetic information
             cur.execute('''
                 SELECT 
-                    bi."Gene",
-                    bi."Mutation",
-                    ct."ClassificationType"
-                FROM "GenCom"."BaseInformation" bi
-                JOIN "GenCom"."ClassificationType" ct 
-                    ON bi."ClassificationTypeID" = ct."ClassificationTypeID"
-                WHERE bi."UserID" = %s
+                    bi.gene,
+                    bi.mutation,
+                    ct.classification_type
+                FROM gencom.base_information bi
+                JOIN gencom.classification_type ct 
+                    ON bi.classification_type_id = ct.classification_type_id
+                WHERE bi.user_id = %s
             ''', (user_id,))
             
             result = cur.fetchone()
@@ -2124,9 +2142,9 @@ def get_condition_analysis(user_id):
                 app.logger.warning(f"⚠️  No base information found for user_id={user_id}")
                 return jsonify({"error": "no_genetic_data_found", "message": "Please complete the introductory screen first"}), 404
             
-            gene = result["Gene"]
-            mutation = result["Mutation"]
-            classification = result["ClassificationType"]
+            gene = result["gene"]
+            mutation = result["mutation"]
+            classification = result["classification_type"]
             
             # Check if required fields are present
             if not gene or not mutation:
@@ -2137,17 +2155,17 @@ def get_condition_analysis(user_id):
             
             # Check if we have cached analysis for this gene/mutation combo
             cur.execute('''
-                SELECT "CachedAnalysis", "AnalysisCachedAt"
-                FROM "GenCom"."BaseInformation"
-                WHERE "UserID" = %s 
-                  AND "CachedAnalysis" IS NOT NULL
+                SELECT cached_analysis, analysis_cached_at
+                FROM gencom.base_information
+                WHERE user_id = %s 
+                  AND cached_analysis IS NOT NULL
             ''', (user_id,))
             
             cached_result = cur.fetchone()
             
             # Use cache if it exists and is less than 7 days old
-            if cached_result and cached_result.get("CachedAnalysis"):
-                cached_at = cached_result.get("AnalysisCachedAt")
+            if cached_result and cached_result.get("cached_analysis"):
+                cached_at = cached_result.get("analysis_cached_at")
                 
                 # Check if cache is still valid (less than 7 days old)
                 cache_valid = False
@@ -2158,7 +2176,7 @@ def get_condition_analysis(user_id):
                 
                 if cache_valid:
                     try:
-                        cached_data = json.loads(cached_result["CachedAnalysis"])
+                        cached_data = json.loads(cached_result["cached_analysis"])
                         app.logger.info("✅ Returning cached analysis (fast path)")
                         return jsonify(cached_data), 200
                     except json.JSONDecodeError:
@@ -2249,10 +2267,10 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         try:
                             cache_json = json.dumps(condition_data)
                             cur.execute('''
-                                UPDATE "GenCom"."BaseInformation"
-                                SET "CachedAnalysis" = %s,
-                                    "AnalysisCachedAt" = (now() at time zone 'utc')
-                                WHERE "UserID" = %s
+                                UPDATE gencom.base_information
+                                SET cached_analysis = %s,
+                                    analysis_cached_at = (now() at time zone 'utc')
+                                WHERE user_id = %s
                             ''', (cache_json, user_id))
                             conn.commit()
                             app.logger.info("💾 Analysis cached to database for faster future access")
