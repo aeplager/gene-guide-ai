@@ -11,6 +11,7 @@ import json
 import jwt
 from functools import wraps
 import threading
+from genetic_web_scraper import search_all_sources
 
 app = Flask(__name__)
 
@@ -1357,7 +1358,10 @@ def save_base_information():
                         modified_date = %s,
                         cached_analysis_basic = NULL,
                         cached_analysis_detailed = NULL,
-                        analysis_cached_at = NULL
+                        analysis_cached_at = NULL,
+                        source_document = NULL,
+                        source_url = NULL,
+                        source_retrieved_at = NULL
                     WHERE user_id = %s
                     RETURNING user_id'''
                 update_params = (persona_test_type_id, classification_type_id, uploaded_bit, gene, mutation, now, user_id)
@@ -1431,7 +1435,45 @@ def save_base_information():
             
             def async_generate_full_analysis():
                 try:
-                    app.logger.info(f"🔄 Background: Starting FULL analysis generation for user {saved_user_id}")
+                    app.logger.info(f"🔄 Background: Starting web scraping + analysis generation for user {saved_user_id}")
+                    
+                    # STEP 0: Fetch web sources (ClinVar + MedlinePlus)
+                    app.logger.info(f"🌐 Background: Fetching ClinVar and MedlinePlus data for {saved_gene} {saved_mutation}")
+                    try:
+                        web_results = search_all_sources(saved_gene, saved_mutation)
+                        
+                        # Extract URLs
+                        urls = []
+                        if "error" not in web_results.get("clinvar", {}):
+                            urls.append(web_results["clinvar"]["url"])
+                        if "error" not in web_results.get("medlineplus", {}):
+                            urls.append(web_results["medlineplus"]["url"])
+                        
+                        source_url = "; ".join(urls) if urls else None
+                        source_document = web_results.get("combined_text") if urls else None
+                        
+                        # Store web sources in database
+                        if source_document:
+                            bg_conn_web = db_pool.getconn()
+                            try:
+                                with bg_conn_web.cursor() as bg_cur_web:
+                                    bg_cur_web.execute('''
+                                        UPDATE gencom.base_information
+                                        SET source_document = %s,
+                                            source_url = %s,
+                                            source_retrieved_at = (now() at time zone 'utc')
+                                        WHERE user_id = %s
+                                    ''', (source_document, source_url, saved_user_id))
+                                    bg_conn_web.commit()
+                                app.logger.info(f"✅ Background: Stored web sources for user {saved_user_id} from {', '.join(web_results['sources_used'])}")
+                            finally:
+                                db_pool.putconn(bg_conn_web)
+                        else:
+                            app.logger.warning(f"⚠️ Background: No web sources fetched for {saved_gene} {saved_mutation}")
+                    
+                    except Exception as web_error:
+                        app.logger.error(f"❌ Background: Web scraping failed: {web_error}")
+                        # Continue with LLM analysis even if web scraping fails
                     
                     # STEP 1: Generate BASIC analysis (condition, risk, description)
                     basic_prompt = f"""You are a professional genetic counselor providing educational information about genetic test results. 
