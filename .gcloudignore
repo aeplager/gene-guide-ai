@@ -1,0 +1,39 @@
+# Exclude unnecessary files from Cloud Run deployment
+# (Using Dockerfile.backend, so this is just to reduce upload size)
+
+# Node modules (large)
+node_modules/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+.venv/
+venv/
+
+# Git
+.git/
+.gitignore
+
+# Large/unnecessary directories for backend
+Test/
+tavus_updates/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts (frontend)
+dist/
+build/
+*.egg-info/

@@ -14,7 +14,7 @@ if not TAVUS_API_KEY:
     raise RuntimeError("Missing TAVUS_API_KEY in environment.")
 
 TAVUS_REPLICA_ID = os.environ.get("TAVUS_REPLICA_ID", "r4317e64d25a")
-TAVUS_PERSONA_ID = os.environ.get("TAVUS_PERSONA_ID", "p92464cdb59e")
+TAVUS_PERSONA_ID = os.environ.get("TAVUS_PERSONA_ID", "pc9d33a162be")
 
 TAVUS_BASE = "https://tavusapi.com/v2"
 HEADERS = {

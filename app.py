@@ -12,6 +12,8 @@ import jwt
 from functools import wraps
 import threading
 from genetic_web_scraper import search_all_sources
+from google import genai
+from google.genai import types
 
 app = Flask(__name__)
 
@@ -39,16 +41,20 @@ TAVUS_AWS_ASSUME_ROLE_ARN = os.getenv("TAVUS_AWS_ASSUME_ROLE_ARN")
 
 # Database Configuration
 DB_CONNECTION_STRING = os.getenv("DB_CONNECTION_STRING")
-# Strip SQLAlchemy-style prefix if present (e.g., postgresql+psycopg2://)
-if DB_CONNECTION_STRING and "+psycopg2://" in DB_CONNECTION_STRING:
-    DB_CONNECTION_STRING = DB_CONNECTION_STRING.replace("postgresql+psycopg2://", "postgresql://")
+# Strip SQLAlchemy-style prefix if present (e.g., postgresql+asyncpg://)
+if DB_CONNECTION_STRING and DB_CONNECTION_STRING.startswith("postgresql+"):
+    DB_CONNECTION_STRING = "postgresql://" + DB_CONNECTION_STRING.split("://", 1)[1]
     app.logger.info("Converted SQLAlchemy-style connection string to psycopg2 format")
 COMPANY_ID = os.getenv("COMPANY_ID", "1")
 
-# Custom LLM Configuration
+# LLM Configuration (Gemini)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
+GEMINI_API_MODE = os.getenv("GEMINI_API_MODE", "vertex").lower()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+VERTEX_PROJECT_ID = os.getenv("VERTEX_PROJECT_ID")
+VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "global")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 CUSTOM_LLM_BASE_URL = os.getenv("CUSTOM_LLM_BASE_URL")
-CUSTOM_LLM_API_KEY = os.getenv("CUSTOM_LLM_API_KEY")
-CUSTOM_LLM_PERSONA_ID = os.getenv("CUSTOM_LLM_PERSONA_ID")
 
 # JWT Configuration
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
@@ -71,9 +77,13 @@ if TAVUS_ENABLE_RECORDING:
     app.logger.info(f"TAVUS_AWS_ASSUME_ROLE_ARN: {'SET' if TAVUS_AWS_ASSUME_ROLE_ARN else 'NOT SET'}")
 app.logger.info(f"CORS_ORIGINS: {CORS_ORIGINS}")
 app.logger.info(f"COMPANY_ID: {COMPANY_ID}")
+app.logger.info(f"LLM_PROVIDER: {LLM_PROVIDER}")
+app.logger.info(f"GEMINI_API_MODE: {GEMINI_API_MODE}")
+app.logger.info(f"GEMINI_MODEL: {GEMINI_MODEL}")
+app.logger.info(f"VERTEX_PROJECT_ID: {VERTEX_PROJECT_ID or 'NOT SET'}")
+app.logger.info(f"VERTEX_LOCATION: {VERTEX_LOCATION}")
+app.logger.info(f"GOOGLE_API_KEY: {'SET' if GOOGLE_API_KEY else 'NOT SET'}")
 app.logger.info(f"CUSTOM_LLM_BASE_URL: {CUSTOM_LLM_BASE_URL or 'NOT SET'}")
-app.logger.info(f"CUSTOM_LLM_API_KEY: {'SET' if CUSTOM_LLM_API_KEY else 'NOT SET'}")
-app.logger.info(f"CUSTOM_LLM_PERSONA_ID: {CUSTOM_LLM_PERSONA_ID or 'NOT SET'}")
 app.logger.info(f"JWT_SECRET: {'SET' if JWT_SECRET and JWT_SECRET != 'your-secret-key-change-in-production' else 'NOT SET'}")
 app.logger.info(f"JWT_EXP_HOURS: {JWT_EXP_HOURS}")
 app.logger.info(f"TAVUS_CUSTOM_LLM_ENABLE: {TAVUS_CUSTOM_LLM_ENABLE}")
@@ -187,105 +197,115 @@ def jwt_required(optional=False):
     return decorator
 
 # ============================================================================
-# REUSABLE CUSTOM LLM FUNCTION
+# GEMINI LLM FUNCTION
 # ============================================================================
-def call_custom_llm(user_message: str, conversation_id: str = None, max_tokens: int = 512, stream: bool = False):
+_gemini_client = None
+
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client is not None:
+        return _gemini_client
+
+    if GEMINI_API_MODE == "public":
+        if not GOOGLE_API_KEY:
+            raise ValueError("GOOGLE_API_KEY not set for public Gemini mode")
+        _gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
+    else:
+        if not VERTEX_PROJECT_ID:
+            raise ValueError("VERTEX_PROJECT_ID not set for Vertex Gemini mode")
+        _gemini_client = genai.Client(
+            vertexai=True,
+            project=VERTEX_PROJECT_ID,
+            location=VERTEX_LOCATION,
+        )
+
+    return _gemini_client
+
+def _build_gemini_config(max_tokens: int, system_instruction: str | None = None, response_format: str = None):
+    config = types.GenerateContentConfig(
+        temperature=1.0,
+        top_p=0.95,
+        seed=0,
+        max_output_tokens=max_tokens,
+        safety_settings=[
+            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
+            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
+        ],
+    )
+
+    if system_instruction:
+        config.system_instruction = system_instruction
+    
+    if response_format == "json":
+        config.response_mime_type = "application/json"
+
+    return config
+
+def call_custom_llm(user_message: str, conversation_id: str = None, max_tokens: int = 1024, stream: bool = False, response_format: str = None):
     """
-    Call the custom LLM hosted on Azure Container Apps.
+    Call Gemini 3 Flash Preview using google-genai SDK.
+    Returns an OpenAI-style payload to preserve existing callers.
     
     Args:
-        user_message: The user's question/prompt
-        conversation_id: Optional conversation UUID (generates new one if not provided)
-        max_tokens: Maximum tokens in response (default 512)
-        stream: If True, returns streaming response (SSE)
-    
-    Returns:
-        dict: Response from the LLM with structure:
-            {
-                "choices": [{"message": {"content": "..."}}],
-                "usage": {...},
-                "error": "..." (if error occurs)
-            }
-    
-    Raises:
-        ValueError: If custom LLM is not configured
-        requests.RequestException: If HTTP request fails
+        user_message: The prompt to send to Gemini
+        conversation_id: Optional conversation tracking ID
+        max_tokens: Max output tokens (default 1024, increased from 512)
+        stream: Not implemented (raises error if True)
+        response_format: If "json", forces Gemini to return valid JSON via response_mime_type
     """
-    if not all([CUSTOM_LLM_BASE_URL, CUSTOM_LLM_API_KEY, CUSTOM_LLM_PERSONA_ID]):
-        raise ValueError("Custom LLM not fully configured. Check CUSTOM_LLM_BASE_URL, CUSTOM_LLM_API_KEY, and CUSTOM_LLM_PERSONA_ID")
-    
+    if LLM_PROVIDER.lower() != "gemini":
+        raise ValueError("LLM_PROVIDER must be set to 'gemini'")
+
+    if stream:
+        raise NotImplementedError("Streaming Gemini responses are not implemented in this app")
+
     # Generate a random conversation_id if not provided
     if not conversation_id:
         conversation_id = str(uuid.uuid4())
-    
-    url = f"{CUSTOM_LLM_BASE_URL}/v1/chat/completions"
-    
-    payload = {
-        "model": "custom-llm-gc",
-        "conversation_id": conversation_id,
-        "persona_id": CUSTOM_LLM_PERSONA_ID,
-        "max_tokens": max_tokens,
-        "stream": stream,
-        "messages": [
-            {"role": "user", "content": user_message}
-        ]
-    }
-    
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": CUSTOM_LLM_API_KEY
-    }
-    
-    app.logger.info(f"🤖 custom_llm:call conversation_id={conversation_id}")
-    app.logger.info(f"🤖 custom_llm:prompt_length={len(user_message)} chars")
-    
+
+    app.logger.info(f"🤖 gemini:call conversation_id={conversation_id} json_mode={response_format == 'json'}")
+    app.logger.info(f"🤖 gemini:prompt_length={len(user_message)} chars")
+
+    client = _get_gemini_client()
+    contents = [{"role": "user", "parts": [{"text": user_message}]}]
+    config = _build_gemini_config(max_tokens=max_tokens, response_format=response_format)
+
     try:
-        if stream:
-            # For streaming, return the response object for the caller to handle
-            app.logger.info("🤖 custom_llm:streaming=True")
-            resp = requests.post(url, json=payload, headers=headers, stream=True, verify=False, timeout=60)
-            resp.raise_for_status()
-            return resp
-        else:
-            # Non-streaming: return parsed JSON
-            app.logger.info("🤖 custom_llm:streaming=False")
-            resp = requests.post(url, json=payload, headers=headers, verify=False, timeout=60)
-            resp.raise_for_status()
-            result = resp.json()
-            
-            # Log response metadata
-            if "choices" in result and len(result["choices"]) > 0:
-                content = result["choices"][0].get("message", {}).get("content", "")
-                app.logger.info(f"✅ custom_llm:response_length={len(content)} chars")
-            
-            if "usage" in result:
-                app.logger.info(f"✅ custom_llm:usage={result['usage']}")
-            
-            return result
-            
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"❌ custom_llm:error {type(e).__name__}: {e}")
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config=config,
+        )
+
+        text = response.text or ""
+        app.logger.info(f"✅ gemini:response_length={len(text)} chars")
+
+        return {
+            "choices": [
+                {"message": {"content": text}}
+            ]
+        }
+    except Exception as e:
+        app.logger.error(f"❌ gemini:error {type(e).__name__}: {e}")
         raise
 
 def prewarm_custom_llm():
     """
-    Pre-warm the custom LLM by calling /healthz endpoint
-    This reduces cold-start latency for the first Tavus conversation
+    Pre-warm the custom LLM by calling /healthz.
     """
     if not TAVUS_CUSTOM_LLM_ENABLE or not CUSTOM_LLM_BASE_URL:
         app.logger.info("⏭️  custom_llm:prewarm:skipped (not enabled)")
         return {"skipped": True, "reason": "not_enabled"}
-    
+
     try:
         healthz_url = f"{CUSTOM_LLM_BASE_URL}/healthz"
         app.logger.info(f"🔥 custom_llm:prewarm:start url={healthz_url}")
         start_time = datetime.now(timezone.utc)
-        
         resp = requests.get(healthz_url, timeout=20, verify=True)
-        
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         app.logger.info(f"✅ custom_llm:prewarm:success status={resp.status_code} duration={duration:.2f}s")
-        
         return {
             "success": True,
             "status_code": resp.status_code,
@@ -330,7 +350,7 @@ def resolve_system_user_id(email: str):
 @app.get("/healthz")
 def healthz():
     """
-    Health check endpoint that also warms up the custom LLM
+    Health check endpoint that also warms up Gemini
     Called by frontend on page load to reduce cold-start latency
     Returns immediately - warmup happens asynchronously
     """
@@ -344,7 +364,7 @@ def healthz():
     }
     
     # Trigger LLM warmup in background thread (non-blocking)
-    if TAVUS_CUSTOM_LLM_ENABLE and CUSTOM_LLM_BASE_URL:
+    if TAVUS_CUSTOM_LLM_ENABLE:
         def async_warmup():
             try:
                 prewarm_result = prewarm_custom_llm()
@@ -548,8 +568,9 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         try:
                             llm_response = call_custom_llm(
                                 user_message=basic_prompt,
-                                max_tokens=512,
-                                stream=False
+                                max_tokens=1024,
+                                stream=False,
+                                response_format="json"
                             )
                             
                             if "choices" in llm_response and len(llm_response["choices"]) > 0:
@@ -586,8 +607,8 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                     
                     # Build custom greeting for Tavus conversation
                     if condition and description:
-                        custom_greeting = f"Hi I understand you're here to talk about the results of your genetic testing. From what I can gather you are talking about {condition}. {description} I know these kinds of results can bring up questions or uncertainties. I'm here to help you understand them fully, so please feel free to ask any questions or share any concerns you have."
-                        app.logger.info(f"👋 Custom greeting created for condition: {condition}")
+                        custom_greeting = f"Hi, I understand you're here to discuss the results of your genetic testing. I can see you have results for the {gene} gene — specifically the {mutation} variant. {description} I know these kinds of results can bring up a lot of questions or uncertainties, and I'm here to help you understand them fully. Please feel free to ask anything or share any concerns you have."
+                        app.logger.info(f"👋 Custom greeting created for gene={gene}, mutation={mutation}, condition: {condition}")
                     else:
                         app.logger.info("⚠️  Skipping custom greeting - condition or description not available")
                     
@@ -879,8 +900,9 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                         try:
                             llm_response = call_custom_llm(
                                 user_message=basic_prompt,
-                                max_tokens=512,
-                                stream=False
+                                max_tokens=1024,
+                                stream=False,
+                                response_format="json"
                             )
                             
                             if "choices" in llm_response and len(llm_response["choices"]) > 0:
@@ -916,8 +938,8 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                     
                     # Build custom greeting for Vapi conversation (same format as Tavus)
                     if condition and description:
-                        custom_greeting = f"Hi I understand you're here to talk about the results of your genetic testing. From what I can gather you are talking about {condition}. {description} I know these kinds of results can bring up questions or uncertainties. I'm here to help you understand them fully, so please feel free to ask any questions or share any concerns you have."
-                        app.logger.info(f"👋 vapi: Custom greeting created for condition: {condition}")
+                        custom_greeting = f"Hi, I understand you're here to discuss the results of your genetic testing. I can see you have results for the {gene} gene — specifically the {mutation} variant. {description} I know these kinds of results can bring up a lot of questions or uncertainties, and I'm here to help you understand them fully. Please feel free to ask anything or share any concerns you have."
+                        app.logger.info(f"👋 vapi: Custom greeting created for gene={gene}, mutation={mutation}, condition: {condition}")
                     else:
                         # Fallback to generic greeting if no genetic data
                         custom_greeting = "Hi, I'm here to help you understand your genetic testing results. Please feel free to ask any questions or share any concerns you have."
@@ -1495,8 +1517,9 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                     
                     llm_response = call_custom_llm(
                         user_message=basic_prompt,
-                        max_tokens=512,
-                        stream=False
+                        max_tokens=1024,
+                        stream=False,
+                        response_format="json"
                     )
                     
                     basic_data = None
@@ -1569,8 +1592,9 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                     
                     llm_response_detailed = call_custom_llm(
                         user_message=detailed_prompt,
-                        max_tokens=1024,
-                        stream=False
+                        max_tokens=2048,
+                        stream=False,
+                        response_format="json"
                     )
                     
                     if "choices" in llm_response_detailed and len(llm_response_detailed["choices"]) > 0:
@@ -1895,8 +1919,9 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                 # Call custom LLM with smaller max_tokens for faster response
                 llm_response = call_custom_llm(
                     user_message=prompt,
-                    max_tokens=384,  # Smaller for basic response
-                    stream=False
+                    max_tokens=1024,  # Increased to avoid truncation
+                    stream=False,
+                    response_format="json"
                 )
                 
                 # Extract the assistant's message
@@ -2079,8 +2104,9 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                 # Call custom LLM
                 llm_response = call_custom_llm(
                     user_message=prompt,
-                    max_tokens=1024,
-                    stream=False
+                    max_tokens=2048,
+                    stream=False,
+                    response_format="json"
                 )
                 
                 # Extract the assistant's message
@@ -2277,8 +2303,9 @@ CRITICAL: Respond ONLY with the JSON object, no additional text."""
                 # Call custom LLM
                 llm_response = call_custom_llm(
                     user_message=prompt,
-                    max_tokens=1024,
-                    stream=False
+                    max_tokens=2048,
+                    stream=False,
+                    response_format="json"
                 )
                 
                 # Extract the assistant's message

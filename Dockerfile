@@ -6,5 +6,3 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8081
 CMD ["sh", "-c", "gunicorn -w 2 -b 0.0.0.0:${PORT:-8081} --timeout 120 app:app"]
-
-

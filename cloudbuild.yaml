@@ -1,0 +1,92 @@
+steps:
+  # Build backend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.backend'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-api:latest'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-api:$SHORT_SHA'
+      - '.'
+    env:
+      - 'DOCKER_BUILDKIT=1'
+
+  # Push backend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-api'
+
+  # Build frontend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.frontend'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-web:latest'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-web:$SHORT_SHA'
+      - '--build-arg'
+      - 'VITE_TAVUS_BACKEND_URL=https://gene-guide-api-${PROJECT_NUMBER}.${_REGION}.run.app'
+      - '--build-arg'
+      - 'VITE_VAPI_PUBLIC_KEY=${_VAPI_PUBLIC_KEY}'
+      - '.'
+    env:
+      - 'DOCKER_BUILDKIT=1'
+
+  # Push frontend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-web'
+
+  # Deploy backend to Cloud Run
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'gene-guide-api'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-api:$SHORT_SHA'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--timeout=300'
+      - '--max-instances=100'
+      - '--set-env-vars-from-file=/workspace/.env'
+      - '--allow-unauthenticated'
+      - '--project=${PROJECT_ID}'
+
+  # Deploy frontend to Cloud Run
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'gene-guide-web'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-web:$SHORT_SHA'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--memory=256Mi'
+      - '--cpu=1'
+      - '--timeout=60'
+      - '--max-instances=100'
+      - '--allow-unauthenticated'
+      - '--project=${PROJECT_ID}'
+
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-api:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/gene-guide-web:latest'
+
+options:
+  machineType: N1_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _REGION: 'us-central1'
+  _REPO_NAME: 'gene-guide-repo'
+  _VAPI_PUBLIC_KEY: 'pk_your_public_key'
+
+timeout: '1200s'

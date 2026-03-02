@@ -1,0 +1,85 @@
+# GCP Cloud Run Environment Configuration
+# Copy this to .env and update with your values before deployment
+
+# ============================================================================
+# GCP Cloud Run Service Configuration
+# ============================================================================
+GCP_PROJECT_ID=your-project-id-here
+GCP_REGION=us-central1
+GCP_ARTIFACT_REGISTRY_REPO=gene-guide-repo
+
+# ============================================================================
+# Backend Configuration
+# ============================================================================
+TAVUS_API_KEY=your_tavus_api_key_here
+TAVUS_REPLICA_ID=r4317e64d25a
+TAVUS_PERSONA_ID=p92464cdb59e
+TAVUS_CALLBACK_URL=https://gene-guide-api-PROJECT_NUMBER.REGION.run.app/callback
+TAVUS_CUSTOM_LLM_ENABLE=true
+TAVUS_ENABLE_RECORDING=false
+TAVUS_RECORDING_S3_BUCKET_NAME=your-s3-bucket-name
+TAVUS_RECORDING_S3_BUCKET_REGION=us-east-1
+TAVUS_AWS_ASSUME_ROLE_ARN=arn:aws:iam::123456789012:role/your-role-name
+
+# ============================================================================
+# Database Configuration
+# ============================================================================
+# For Cloud SQL (recommended for GCP)
+DB_CONNECTION_STRING=postgresql+asyncpg://user:password@/dbname?host=/cloudsql/PROJECT_ID:REGION:instance-name
+COMPANY_ID=1
+
+# ============================================================================
+# Custom LLM Configuration
+# Point to GCP Cloud Run backend instance URL
+# ============================================================================
+CUSTOM_LLM_BASE_URL=https://gene-guide-api-PROJECT_NUMBER.REGION.run.app
+CUSTOM_LLM_API_KEY=your_custom_llm_api_key
+CUSTOM_LLM_PERSONA_ID=your_custom_llm_persona_id
+
+# ============================================================================
+# JWT Configuration
+# ============================================================================
+JWT_SECRET=your-secret-key-change-in-production
+JWT_EXP_HOURS=12
+
+# ============================================================================
+# Frontend Configuration (Build-Time Variables)
+# ============================================================================
+# These are used during Docker build, not at runtime
+VITE_TAVUS_BACKEND_URL=https://gene-guide-api-PROJECT_NUMBER.REGION.run.app
+VITE_VAPI_PUBLIC_KEY=pk_your_vapi_public_key_here
+
+# ============================================================================
+# CORS Configuration
+# ============================================================================
+# For GCP Cloud Run, use the frontend service URL
+CORS_ORIGINS=https://gene-guide-web-PROJECT_NUMBER.REGION.run.app
+
+# ============================================================================
+# Cloud Run Service Configuration
+# ============================================================================
+# Memory and CPU settings (can be overridden in deploy scripts)
+SERVICE_MEMORY=512Mi
+SERVICE_CPU=1
+SERVICE_TIMEOUT=300
+SERVICE_MAX_INSTANCES=100
+SERVICE_MIN_INSTANCES=0
+
+# ============================================================================
+# Logging Configuration
+# ============================================================================
+# Cloud Run automatically sends logs to Cloud Logging
+LOG_LEVEL=info
+
+# ============================================================================
+# Notes for GCP Deployment:
+# ============================================================================
+# 1. Replace PROJECT_ID with your actual GCP project ID
+# 2. Replace PROJECT_NUMBER with your GCP project number
+# 3. Replace REGION with your desired region (default: us-central1)
+# 4. Replace instance-name with your Cloud SQL instance name
+# 5. Update all API keys and secrets with actual values
+# 6. For Cloud SQL connections, use Cloud SQL Auth Proxy or Cloud SQL Connector
+# 7. The deploy script will automatically construct full service URLs:
+#    - Backend: https://gene-guide-api-{PROJECT_NUMBER}.{REGION}.run.app
+#    - Frontend: https://gene-guide-web-{PROJECT_NUMBER}.{REGION}.run.app

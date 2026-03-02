@@ -60,7 +60,7 @@ def update_persona_llm(tavus_api_key, persona_id, llm_model, llm_api_key, llm_ba
     else:
         print(f"Failed to update persona: {response.status_code} - {response.text}")
 
-persona_id = 'p70ec11f62ec'
+persona_id = 'pc9d33a162be'
 persona_data = get_persona_parameters(persona_id)
 
 if persona_data:
