@@ -191,6 +191,14 @@ def jwt_required(optional=False):
                 if not optional:
                     app.logger.warning("jwt:invalid_token error=%s", str(e))
                     return jsonify({"error": "unauthorized", "message": str(e)}), 401
+                # Optional + expired: decode without expiry check to still get user_id for context loading
+                if "expired" in str(e).lower():
+                    try:
+                        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], options={"verify_exp": False})
+                        app.logger.info("jwt:expired_grace user_id=%s email=%s (token expired but user_id recovered for context)", payload.get('sub'), payload.get('email'))
+                        return f(payload, *args, **kwargs)
+                    except Exception:
+                        pass
                 # Optional: continue without user info
                 return f(None, *args, **kwargs)
         return decorated_function
