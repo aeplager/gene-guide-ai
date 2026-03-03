@@ -72,12 +72,8 @@ print_header() {
 
 print_header "GCP Cloud Run Deployment Script"
 
-# Check if PROJECT_ID is provided
-if [ -z "$1" ]; then
-    print_error "PROJECT_ID is required. Usage: $0 <PROJECT_ID> [SERVICE_NAME] [REGION] [MEMORY] [CPU]"
-fi
-
-PROJECT_ID="$1"
+# Default PROJECT_ID to chief-of-staff-480821 if not provided
+PROJECT_ID="${1:-chief-of-staff-480821}"
 
 print_info "Configuration:"
 echo "  Project ID:    $PROJECT_ID"

@@ -47,6 +47,10 @@ const LegacyVoiceCallPanel = () => {
   const [feedbackChanges, setFeedbackChanges] = useState<Record<string, { status: number; text: string; conversation_id: number | string; ordinal: number }>>({});
   const [savingFeedback, setSavingFeedback] = useState(false);
   const transcriptPollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Active Vapi call ID — captured from message events, used to scope transcript polling
+  const [vapiCallId, setVapiCallId] = useState<string | null>(null);
+  const vapiCallIdRef = useRef<string | null>(null);
   
   // Initialize Vapi instance once
   useEffect(() => {
@@ -63,10 +67,55 @@ const LegacyVoiceCallPanel = () => {
   }, [vapiPublicKey]);
   
   // Event handlers
-  const handleCallStart = () => {
-    console.log("[Vapi] Call started");
+  // Capture call ID from Vapi message events and register it with the backend
+  const handleMessage = async (message: any) => {
+    const callId: string | undefined = message?.call?.id;
+    if (callId && callId !== vapiCallIdRef.current) {
+      console.log("[Vapi] 📞 Got call ID from message event:", callId);
+      vapiCallIdRef.current = callId;
+      setVapiCallId(callId);
+
+      // Register this call ID in the backend so transcript queries can find it
+      const token = localStorage.getItem("auth_token");
+      if (token) {
+        try {
+          const res = await fetch(`${backendBase}/vapi/track-call`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ call_id: callId }),
+          });
+          console.log("[Vapi] 🔗 Track-call response:", res.status);
+        } catch (err) {
+          console.error("[Vapi] Failed to track call ID:", err);
+        }
+      }
+    }
+  };
+
+  const handleCallStart = (call?: any) => {
+    console.log("[Vapi] Call started, call object:", JSON.stringify(call));
     setCallState("in-call");
     setCallDuration(0);
+
+    // Capture call ID from call-start event (most reliable source)
+    const callId = call?.id;
+    if (callId && callId !== vapiCallIdRef.current) {
+      console.log("[Vapi] 📞 Got call ID from call-start event:", callId);
+      vapiCallIdRef.current = callId;
+      setVapiCallId(callId);
+      const token = localStorage.getItem("auth_token");
+      if (token) {
+        fetch(`${backendBase}/vapi/track-call`, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ call_id: callId }),
+        })
+          .then(res => console.log("[Vapi] 🔗 Track-call response (from call-start):", res.status))
+          .catch(err => console.error("[Vapi] Failed to track call ID from call-start:", err));
+      }
+    } else {
+      console.warn("[Vapi] ⚠️ call-start event fired but no call ID found. call object:", call);
+    }
     
     // Start timer
     timerRef.current = setInterval(() => {
@@ -137,6 +186,7 @@ const LegacyVoiceCallPanel = () => {
     vapi.on("speech-start", handleSpeechStart);
     vapi.on("speech-end", handleSpeechEnd);
     vapi.on("error", handleError);
+    vapi.on("message", handleMessage);
     
     // Cleanup event listeners
     return () => {
@@ -145,6 +195,7 @@ const LegacyVoiceCallPanel = () => {
       vapi.off("speech-start", handleSpeechStart);
       vapi.off("speech-end", handleSpeechEnd);
       vapi.off("error", handleError);
+      vapi.off("message", handleMessage);
     };
   }, []);
   
@@ -180,7 +231,7 @@ const LegacyVoiceCallPanel = () => {
     // Cleanup handled in the unmount useEffect above
   }, []); // Empty dependency array = run once on mount
   
-  // Fetch transcript from backend
+  // Fetch transcript from backend — scoped to active Vapi call ID if available
   const fetchTranscript = async () => {
     const token = localStorage.getItem("auth_token");
     if (!token) {
@@ -189,7 +240,15 @@ const LegacyVoiceCallPanel = () => {
     }
 
     try {
-      const response = await fetch(`${backendBase}/conversations/recent-transcript`, {
+      // Use the active Vapi call ID to scope results to this specific call
+      const callId = vapiCallIdRef.current;
+      const url = callId
+        ? `${backendBase}/conversations/recent-transcript?conversation_id=${encodeURIComponent(callId)}`
+        : `${backendBase}/conversations/recent-transcript`;
+
+      console.log(`[Transcript] Fetching${callId ? ` for call ${callId}` : ' (2h window)'}`);
+
+      const response = await fetch(url, {
         headers: {
           "Authorization": `Bearer ${token}`,
         },
@@ -332,14 +391,19 @@ const LegacyVoiceCallPanel = () => {
       
       let greeting = null;
       let geneticContext = null;
+      let preUserId: string | null = null;
+      let preConversationId: string | null = null;
       
       if (response.ok) {
         const data = await response.json();
         greeting = data.greeting;
         geneticContext = data.genetic_context;
+        preUserId = data.user_id ?? null;
+        preConversationId = data.conversation_id ?? null;
         setPersonalizedGreeting(greeting);
         console.log("[Vapi] Personalized greeting received:", greeting?.substring(0, 50) + "...");
         console.log("[Vapi] Genetic context available:", !!geneticContext);
+        console.log("[Vapi] user_id:", preUserId, "conversation_id:", preConversationId);
       } else {
         console.warn("[Vapi] Failed to fetch greeting, using default assistant behavior");
       }
@@ -349,33 +413,59 @@ const LegacyVoiceCallPanel = () => {
       // Start Vapi call with correct assistant overrides format
       console.log("[Vapi] Starting call with assistant:", ASSISTANT_ID);
       
-      if (greeting || geneticContext) {
-        console.log("[Vapi] 🎯 Passing variables to assistant (FIXED FORMAT!)");
-        
-        // Build assistant overrides object (NOT wrapped in assistantOverrides key!)
-        const assistantOverrides: Record<string, any> = {};
-        
-        if (greeting || geneticContext) {
-          assistantOverrides.variableValues = {};
-          
-          if (greeting) {
-            assistantOverrides.variableValues.greeting = greeting;
-            console.log("[Vapi] ✅ Setting greeting variable:", greeting.substring(0, 50) + "...");
-          }
-          
-          if (geneticContext) {
-            assistantOverrides.variableValues.genetic_context = geneticContext;
-            console.log("[Vapi] ✅ Setting genetic_context variable");
-          }
-        }
-        
-        // Pass assistantOverrides DIRECTLY as 2nd parameter (no wrapper!)
-        await vapiRef.current.start(ASSISTANT_ID, assistantOverrides);
+      // Always build variableValues — include user_id and conversation_id when available
+      const variableValues: Record<string, string> = {};
+
+      if (greeting) {
+        variableValues.greeting = greeting;
+        console.log("[Vapi] ✅ Setting greeting variable:", greeting.substring(0, 50) + "...");
+      }
+      if (geneticContext) {
+        variableValues.genetic_context = geneticContext;
+        console.log("[Vapi] ✅ Setting genetic_context variable");
+      }
+      if (preUserId) {
+        variableValues.user_id = preUserId;
+        console.log("[Vapi] ✅ Setting user_id variable:", preUserId);
+      }
+      if (preConversationId) {
+        variableValues.conversation_id = preConversationId;
+        console.log("[Vapi] ✅ Setting conversation_id variable:", preConversationId);
+      }
+
+      let callResult: any = null;
+      if (Object.keys(variableValues).length > 0) {
+        console.log("[Vapi] 🎯 Passing variables to assistant:", Object.keys(variableValues).join(", "));
+        // Pass variableValues DIRECTLY as 2nd parameter (no wrapper!)
+        callResult = await vapiRef.current.start(ASSISTANT_ID, { variableValues });
         console.log("[Vapi] ✅ Call started with personalized variables!");
       } else {
         // No overrides needed
-        await vapiRef.current.start(ASSISTANT_ID);
+        callResult = await vapiRef.current.start(ASSISTANT_ID);
         console.log("[Vapi] ✅ Call started with default configuration");
+      }
+
+      // Capture call ID directly from start() return value and register it immediately
+      const callId = callResult?.id;
+      if (callId) {
+        console.log("[Vapi] 📞 Got call ID from start() return value:", callId);
+        vapiCallIdRef.current = callId;
+        setVapiCallId(callId);
+        const token = localStorage.getItem("auth_token");
+        if (token) {
+          try {
+            const res = await fetch(`${backendBase}/vapi/track-call`, {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ call_id: callId }),
+            });
+            console.log("[Vapi] 🔗 Track-call response (from start):", res.status);
+          } catch (err) {
+            console.error("[Vapi] Failed to track call ID from start:", err);
+          }
+        }
+      } else {
+        console.warn("[Vapi] ⚠️ No call ID returned from start() — will rely on message event fallback");
       }
     } catch (error) {
       console.error("[Vapi] Failed to start call:", error);

@@ -755,10 +755,12 @@ Please use this information to provide personalized genetic counseling to the pa
         debug_info['conversation_url'] = conversation_url
         
         # Track conversation in database if user is authenticated
+        app.logger.info(f"🔍 tavus:db:pre-insert check — user_email={user_email!r} db_pool={'SET' if db_pool else 'NONE'} tavus_conversation_id={tavus_conversation_id!r} jwt_user_id={jwt_user_id!r}")
         if user_email and db_pool and tavus_conversation_id:
             try:
                 # Resolve system user ID from email
                 system_user_id = resolve_system_user_id(user_email)
+                app.logger.info(f"🔍 tavus:db:resolve_user — email={user_email!r} resolved_system_user_id={system_user_id!r} jwt_user_id={jwt_user_id!r}")
                 if not system_user_id:
                     # Fallback to JWT sub if email lookup fails
                     system_user_id = jwt_user_id
@@ -766,6 +768,7 @@ Please use this information to provide personalized genetic counseling to the pa
                 debug_info['system_user_id'] = system_user_id
                 
                 if system_user_id:
+                    app.logger.info(f"🔍 tavus:db:inserting — user_id={system_user_id!r} tavus_conversation_id={tavus_conversation_id!r} conversation_type_id=1")
                     conn = db_pool.getconn()
                     try:
                         with conn.cursor() as cur:
@@ -787,12 +790,13 @@ Please use this information to provide personalized genetic counseling to the pa
                     finally:
                         db_pool.putconn(conn)
                 else:
-                    app.logger.warning("⚠️  tavus:db:skipped (no system_user_id)")
+                    app.logger.warning(f"⚠️  tavus:db:skipped (no system_user_id) — user_email={user_email!r} jwt_user_id={jwt_user_id!r}")
                     debug_info['db_tracking'] = 'skipped: no_user_id'
             except Exception as e:
                 app.logger.error(f"❌ tavus:db:tracking_error {e}")
                 debug_info['db_tracking'] = f'error: {str(e)}'
         else:
+            app.logger.warning(f"⚠️  tavus:db:insert skipped — user_email={user_email!r} db_pool={'SET' if db_pool else 'NONE'} tavus_conversation_id={tavus_conversation_id!r}")
             debug_info['db_tracking'] = 'skipped: unauthenticated or missing data'
         
         response_data = tavus_response.copy()
@@ -978,16 +982,79 @@ Please use this information to provide personalized genetic counseling to the pa
         custom_greeting = "Hi, I'm here to help you understand your genetic testing results. Please feel free to ask any questions or share any concerns you have."
         app.logger.info("👋 vapi: Using generic greeting for unauthenticated user")
     
+    # Pre-generate a conversation ID for this session (UUID, used for DB tracking)
+    import uuid
+    pre_conversation_id = str(uuid.uuid4())
+
     # Return configuration for frontend to use
     response = {
         "greeting": custom_greeting,
         "genetic_context": genetic_context,
         "user_email": user_email,
-        "authenticated": bool(jwt_user_id)
+        "authenticated": bool(jwt_user_id),
+        "user_id": jwt_user_id,
+        "conversation_id": pre_conversation_id
     }
     
-    app.logger.info(f"✅ vapi:start:success greeting_length={len(custom_greeting)} authenticated={bool(jwt_user_id)}")
+    app.logger.info(f"✅ vapi:start:success greeting_length={len(custom_greeting)} authenticated={bool(jwt_user_id)} conversation_id={pre_conversation_id}")
     return jsonify(response), 200
+
+@app.post("/vapi/track-call")
+@jwt_required(optional=True)
+def vapi_track_call(user_payload):
+    """
+    Register a Vapi call ID in conversations_users so the transcript query can find it.
+    Called by the frontend as soon as it receives the call.id from the Vapi message event.
+    Mirrors what /tavus/start does for Tavus conversations.
+    """
+    user_email = user_payload.get('email') if user_payload else None
+    jwt_user_id = user_payload.get('sub') if user_payload else None
+
+    if not user_email or not jwt_user_id:
+        return jsonify({"error": "Authentication required"}), 401
+
+    data = request.get_json(silent=True) or {}
+    vapi_call_id = data.get('call_id')
+
+    if not vapi_call_id:
+        return jsonify({"error": "call_id is required"}), 400
+
+    if not db_pool:
+        return jsonify({"error": "Database not configured"}), 500
+
+    app.logger.info(f"🎙️ vapi:track-call call_id={vapi_call_id} user_email={user_email}")
+
+    try:
+        system_user_id = resolve_system_user_id(user_email)
+        app.logger.info(f"🔍 vapi:track-call:resolve_user — email={user_email!r} resolved_system_user_id={system_user_id!r} jwt_user_id={jwt_user_id!r}")
+        if not system_user_id:
+            system_user_id = jwt_user_id
+
+        app.logger.info(f"🔍 vapi:track-call:inserting — user_id={system_user_id!r} call_id={vapi_call_id!r} conversation_type_id=3")
+        conn = db_pool.getconn()
+        try:
+            with conn.cursor() as cur:
+                # Insert into conversations_users using the Vapi call ID as tavus_conversation_id
+                # This allows the transcript query (which JOINs on tavus_conversation_id) to find Vapi turns too
+                cur.execute(
+                    """
+                    INSERT INTO public.conversations_users
+                    (user_id, tavus_conversation_id, conversation_type_id, created_at)
+                    VALUES (%s, %s, 3, (now() at time zone 'utc'))
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (system_user_id, vapi_call_id)
+                )
+                conn.commit()
+                app.logger.info(f"✅ vapi:track-call:db tracked call_id={vapi_call_id} user_id={system_user_id}")
+        finally:
+            db_pool.putconn(conn)
+
+        return jsonify({"ok": True, "call_id": vapi_call_id}), 200
+
+    except Exception as e:
+        app.logger.error(f"❌ vapi:track-call:error {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.get("/tavus/conversation-id/recent")
 @jwt_required()
@@ -1048,7 +1115,7 @@ def get_recent_tavus_conversation(user_payload):
             db_pool.putconn(conn)
 
 @app.get("/conversations/recent-transcript")
-@jwt_required()
+@jwt_required(optional=True)
 def get_recent_transcript(user_payload):
     """
     Fetch recent conversation transcript for authenticated user (last 2 hours by default)
@@ -1094,7 +1161,7 @@ def get_recent_transcript(user_payload):
                         CT.feedback_status
                     FROM public.conversations C 
                     INNER JOIN public.conversation_turns CT ON C.id = CT.conversation_id  
-                    INNER JOIN public.conversations_users CU 
+                    INNER JOIN public.conversations_users CU
                         ON C.tavus_conversation_id = CU.tavus_conversation_id
                     INNER JOIN public.users U ON CU.user_id = U.id 
                     WHERE U.user_email = %s
@@ -1119,7 +1186,7 @@ def get_recent_transcript(user_payload):
                         CT.feedback_status
                     FROM public.conversations C 
                     INNER JOIN public.conversation_turns CT ON C.id = CT.conversation_id  
-                    INNER JOIN public.conversations_users CU 
+                    INNER JOIN public.conversations_users CU
                         ON C.tavus_conversation_id = CU.tavus_conversation_id
                     INNER JOIN public.users U ON CU.user_id = U.id 
                     WHERE U.user_email = %s

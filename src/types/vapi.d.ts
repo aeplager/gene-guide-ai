@@ -5,7 +5,7 @@ declare module '@vapi-ai/web' {
     'speech-start': () => void;
     'speech-end': () => void;
     'error': (error: { message: string }) => void;
-    'message': (message: any) => void;
+    'message': (message: { type: string; call?: { id: string; [key: string]: any }; [key: string]: any }) => void;
     'volume-level': (level: number) => void;
   }
 
