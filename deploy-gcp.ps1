@@ -2,18 +2,19 @@
 # GCP Cloud Run Deployment Script (PowerShell - Windows)
 # =============================================================================
 # This script builds a Docker image locally, pushes to Google Container Registry,
-# and deploys to Cloud Run with environment variables from .env file.
+# and deploys to Cloud Run with environment variables from an env file.
 #
 # USAGE:
-#   .\deploy-gcp.ps1 -ProjectId <PROJECT_ID> [-ServiceName <NAME>] [-Region <REGION>] [-Memory <SIZE>] [-Cpu <COUNT>]
+#   .\deploy-gcp.ps1 -ProjectId <PROJECT_ID> [-ServiceName <NAME>] [-Region <REGION>] [-Memory <SIZE>] [-Cpu <COUNT>] [-EnvFile <PATH>]
 #
 # EXAMPLES:
 #   .\deploy-gcp.ps1 -ProjectId "my-gcp-project"
 #   .\deploy-gcp.ps1 -ProjectId "my-gcp-project" -ServiceName "legacy-forever-api" -Region "us-central1" -Memory "4Gi" -Cpu "4"
+#   .\deploy-gcp.ps1 -ProjectId "my-gcp-project" -EnvFile ".env.gcp"
 #
 # PREREQUISITES:
 #   1. gcloud CLI installed and authenticated (gcloud auth login)
-#   2. .env file exists in the project directory
+#   2. .env.gcp (recommended) or .env exists in the project directory
 #   3. Dockerfile.backend exists in the project directory
 # =============================================================================
 
@@ -40,7 +41,7 @@ param(
     [string]$Port = "8081",
     
     [Parameter(Mandatory=$false)]
-    [string]$EnvFile = ".env",
+    [string]$EnvFile = ".env.gcp",
     
     [Parameter(Mandatory=$false)]
     [bool]$DeployFrontend = $true,
@@ -105,9 +106,14 @@ Write-Host "  Dockerfile:    $Dockerfile"
 Write-Host "  Port:          $Port"
 Write-Host ""
 
-# Check if .env file exists
+# Check env file with backward-compatible fallback
 if (-not (Test-Path $EnvFile)) {
-    Write-Error "$EnvFile file not found! Please create it before deploying."
+    if ($EnvFile -eq ".env.gcp" -and (Test-Path ".env")) {
+        Write-Warning ".env.gcp not found; falling back to .env"
+        $EnvFile = ".env"
+    } else {
+        Write-Error "$EnvFile file not found! Please create it before deploying."
+    }
 }
 Write-Success "$EnvFile file found"
 

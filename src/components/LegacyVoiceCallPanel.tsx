@@ -122,8 +122,8 @@ const LegacyVoiceCallPanel = () => {
       setCallDuration(prev => prev + 1);
     }, 1000);
     
-    // Note: Transcript polling already running from page load
-    console.log("[Transcript] Audio call started, transcript will continue updating");
+    // Transcript polling is already running and will fetch from database
+    console.log("[Transcript] Audio call started, transcript will be fetched from database");
     
     toast({
       title: "Call Connected",
@@ -142,7 +142,7 @@ const LegacyVoiceCallPanel = () => {
     }
     
     // Keep transcript polling running to show conversation history
-    console.log("[Transcript] Call ended, but transcript will continue showing");
+    console.log("[Transcript] Call ended, but transcript polling continues");
     
     toast({
       title: "Call Ended",
@@ -231,7 +231,7 @@ const LegacyVoiceCallPanel = () => {
     // Cleanup handled in the unmount useEffect above
   }, []); // Empty dependency array = run once on mount
   
-  // Fetch transcript from backend — scoped to active Vapi call ID if available
+  // Fetch transcript from backend — shows all recent conversations (Vapi and Tavus)
   const fetchTranscript = async () => {
     const token = localStorage.getItem("auth_token");
     if (!token) {
@@ -240,13 +240,8 @@ const LegacyVoiceCallPanel = () => {
     }
 
     try {
-      // Use the active Vapi call ID to scope results to this specific call
-      const callId = vapiCallIdRef.current;
-      const url = callId
-        ? `${backendBase}/conversations/recent-transcript?conversation_id=${encodeURIComponent(callId)}`
-        : `${backendBase}/conversations/recent-transcript`;
-
-      console.log(`[Transcript] Fetching${callId ? ` for call ${callId}` : ' (2h window)'}`);
+      const url = `${backendBase}/conversations/recent-transcript`;
+      console.log(`[Transcript] 📡 Fetching all recent conversations from: ${url}`);
 
       const response = await fetch(url, {
         headers: {
@@ -256,13 +251,15 @@ const LegacyVoiceCallPanel = () => {
 
       if (response.ok) {
         const data = await response.json();
+        const turnCount = data.turns?.length || 0;
         setTranscript(data.turns || []);
-        console.log(`[Transcript] Fetched ${data.count || 0} turns`);
+        console.log(`[Transcript] ✅ Fetched ${turnCount} turns`);
       } else {
-        console.error("[Transcript] Error:", response.status);
+        const errorText = await response.text();
+        console.error(`[Transcript] ❌ Error ${response.status}:`, errorText);
       }
     } catch (error) {
-      console.error("[Transcript] Fetch error:", error);
+      console.error("[Transcript] ❌ Fetch error:", error);
     }
   };
 

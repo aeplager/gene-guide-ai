@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import NavigationMenu from "@/components/NavigationMenu";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -391,6 +392,7 @@ const IntroductoryScreen = () => {
 
   return (
     <div className="min-h-screen bg-gradient-bg p-4">
+      <NavigationMenu />
       <div className="max-w-4xl mx-auto space-y-8">
         {/* Header */}
         <div className="text-center py-8">

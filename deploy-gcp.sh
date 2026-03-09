@@ -3,18 +3,20 @@
 # GCP Cloud Run Deployment Script (Bash - Linux/Mac)
 # =============================================================================
 # This script builds a Docker image locally, pushes to Google Container Registry,
-# and deploys to Cloud Run with environment variables from .env file.
+# and deploys to Cloud Run with environment variables from an env file.
 #
 # USAGE:
-#   ./deploy-gcp.sh <PROJECT_ID> [SERVICE_NAME] [REGION] [MEMORY] [CPU]
+#   ./deploy-gcp.sh [PROJECT_ID] [SERVICE_NAME] [REGION] [MEMORY] [CPU] [DEPLOY_FRONTEND] [ENV_FILE]
 #
 # EXAMPLES:
+#   ./deploy-gcp.sh
 #   ./deploy-gcp.sh my-gcp-project
 #   ./deploy-gcp.sh my-gcp-project legacy-forever-api us-central1 4Gi 4
+#   ./deploy-gcp.sh my-gcp-project gene-guide-api us-central1 512Mi 1 true .env.gcp
 #
 # PREREQUISITES:
 #   1. gcloud CLI installed and authenticated (gcloud auth login)
-#   2. .env file exists in the project directory
+#   2. .env (default) or .env.gcp exists in the project directory
 #   3. Dockerfile.backend exists in the project directory
 # =============================================================================
 
@@ -38,6 +40,12 @@ ENV_FILE=".env"
 CLOUD_SQL_CONNECTION="chief-of-staff-480821:us-central1:sopheri"
 DEPLOY_FRONTEND="${6:-true}"
 FRONTEND_SERVICE_NAME="gene-guide-web"
+ENV_FILE_EXPLICIT=false
+
+if [ -n "${7:-}" ]; then
+    ENV_FILE="$7"
+    ENV_FILE_EXPLICIT=true
+fi
 
 # =============================================================================
 # Helper Functions
@@ -72,8 +80,21 @@ print_header() {
 
 print_header "GCP Cloud Run Deployment Script"
 
-# Default PROJECT_ID to chief-of-staff-480821 if not provided
-PROJECT_ID="${1:-chief-of-staff-480821}"
+# Resolve project ID in this order:
+# 1) Explicit first argument
+# 2) GCP_PROJECT_ID environment variable
+# 3) Active gcloud CLI project
+# 4) Repository fallback project
+PROJECT_ID="${1:-${GCP_PROJECT_ID:-}}"
+
+if [ -z "$PROJECT_ID" ] && command -v gcloud &> /dev/null; then
+    PROJECT_ID="$(gcloud config get-value project 2>/dev/null || true)"
+fi
+
+if [ -z "$PROJECT_ID" ]; then
+    PROJECT_ID="chief-of-staff-480821"
+    print_warning "No PROJECT_ID provided and no active gcloud project found. Falling back to: $PROJECT_ID"
+fi
 
 print_info "Configuration:"
 echo "  Project ID:    $PROJECT_ID"
@@ -83,11 +104,18 @@ echo "  Memory:        $MEMORY"
 echo "  CPU:           $CPU"
 echo "  Dockerfile:    $DOCKERFILE"
 echo "  Port:          $PORT"
+echo "  Deploy Frontend: $DEPLOY_FRONTEND"
+echo "  Env File:      $ENV_FILE"
 echo ""
 
-# Check if .env file exists
+# Check env file with backward-compatible fallback
 if [ ! -f "$ENV_FILE" ]; then
-    print_error "$ENV_FILE file not found! Please create it before deploying."
+    if [ "$ENV_FILE_EXPLICIT" = false ] && [ -f ".env.gcp" ]; then
+        print_warning ".env not found; falling back to .env.gcp"
+        ENV_FILE=".env.gcp"
+    else
+        print_error "$ENV_FILE file not found! Please create it before deploying."
+    fi
 fi
 
 print_success "$ENV_FILE file found"
@@ -171,6 +199,15 @@ for key in "${!ENV_MAP[@]}"; do
 done
 
 print_success "Extracted ${#ENV_VARS[@]} unique environment variables"
+
+# Validate common placeholder values to avoid broken Cloud Run deploys.
+if [ -n "${ENV_MAP[CORS_ORIGINS]:-}" ] && [[ "${ENV_MAP[CORS_ORIGINS]}" == *"PROJECT_NUMBER"* || "${ENV_MAP[CORS_ORIGINS]}" == *"your-project"* || "${ENV_MAP[CORS_ORIGINS]}" == *"example"* ]]; then
+    print_error "CORS_ORIGINS appears to contain placeholder values in $ENV_FILE (${ENV_MAP[CORS_ORIGINS]})."
+fi
+
+if [ -n "${ENV_MAP[VITE_TAVUS_BACKEND_URL]:-}" ] && [[ "${ENV_MAP[VITE_TAVUS_BACKEND_URL]}" == *"PROJECT_NUMBER"* || "${ENV_MAP[VITE_TAVUS_BACKEND_URL]}" == *"your-project"* || "${ENV_MAP[VITE_TAVUS_BACKEND_URL]}" == *"example"* ]]; then
+    print_error "VITE_TAVUS_BACKEND_URL appears to contain placeholder values in $ENV_FILE (${ENV_MAP[VITE_TAVUS_BACKEND_URL]})."
+fi
 
 # Debug: Show first few variables (without sensitive values)
 print_info "Sample variables extracted (keys only):"
@@ -257,7 +294,7 @@ if [ "$DEPLOY_FRONTEND" = "true" ]; then
     done
     
     if [ -z "$VAPI_KEY" ]; then
-        print_warning "VITE_VAPI_PUBLIC_KEY not found in .env file"
+        print_warning "VITE_VAPI_PUBLIC_KEY not found in $ENV_FILE"
     fi
     
     # Build the frontend image first using Cloud Build

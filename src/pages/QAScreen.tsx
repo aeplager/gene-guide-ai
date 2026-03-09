@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import NavigationMenu from "@/components/NavigationMenu";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -131,39 +132,13 @@ const QAScreen = () => {
   }, [backendBase]);
 
   // Start polling for transcript immediately on page load
-  // Logic:
-  // - Before video call starts: Show specific previous conversation (if exists)
-  // - After video call starts: Show all recent conversations (to capture both previous and active)
+  // Shows all recent conversations (both Tavus video and Vapi audio)
   useEffect(() => {
-    const getConversationId = () => {
-      // If video call is active, always fetch recent (to capture all conversations)
-      if (isVideoCall) {
-        console.log(`[Transcript] 🎯 getConversationId: Video active, fetching recent (all conversations)`);
-        return undefined;
-      }
-      
-      // If no video call but we have an existing conversation to show, fetch that one
-      if (existingConversationId && !startNewConversation) {
-        console.log(`[Transcript] 🎯 getConversationId: Using existing conversation ${existingConversationId}`);
-        return existingConversationId;
-      }
-      
-      console.log(`[Transcript] 🎯 getConversationId: Fetching recent conversations (existingId: ${existingConversationId}, startNew: ${startNewConversation})`);
-      return undefined;
-    };
-
-    console.log("[Transcript] 🔄 Starting polling (or restarting due to dependency change)...");
-    console.log(`[Transcript] 🔄 Dependencies: existingConversationId=${existingConversationId}, startNewConversation=${startNewConversation}, isVideoCall=${isVideoCall}`);
-    
-    const convId = getConversationId();
-    if (convId) {
-      console.log(`[Transcript] ✅ Will poll specific conversation: ${convId}`);
-    } else {
-      console.log("[Transcript] ✅ Will poll recent conversations (2h)");
-    }
+    console.log("[Transcript] 🔄 Starting polling...");
+    console.log("[Transcript] ✅ Will poll all recent conversations (1000 limit)");
     
     // Fetch immediately
-    fetchTranscript(convId);
+    fetchTranscript();
     
     // Clear any existing interval before creating a new one
     if (transcriptPollIntervalRef.current) {
@@ -173,7 +148,7 @@ const QAScreen = () => {
     
     // Poll every 3 seconds
     transcriptPollIntervalRef.current = setInterval(() => {
-      fetchTranscript(getConversationId());
+      fetchTranscript();
     }, 3000);
     
     console.log("[Transcript] ⏰ Polling interval started (every 3 seconds)");
@@ -185,7 +160,7 @@ const QAScreen = () => {
         clearInterval(transcriptPollIntervalRef.current);
       }
     };
-  }, [existingConversationId, startNewConversation, isVideoCall]); // Re-run when these change
+  }, []); // Run once on mount
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
@@ -238,8 +213,8 @@ const QAScreen = () => {
     return "That's a great question. Based on your BRCA1 results, I can provide you with evidence-based information to help you understand your situation better. Would you like me to explain any specific aspect in more detail? I'm here to help you process this information at your own pace.";
   };
 
-  // Fetch transcript from backend
-  const fetchTranscript = async (conversationId?: string) => {
+  // Fetch transcript from backend — shows all recent conversations (Tavus and Vapi)
+  const fetchTranscript = async () => {
     const token = localStorage.getItem("auth_token");
     if (!token) {
       console.log("[Transcript] ⚠️ No auth token, skipping fetch");
@@ -247,16 +222,9 @@ const QAScreen = () => {
     }
 
     try {
-      // Build URL with optional conversation_id parameter
-      let url = `${backendBase}/conversations/recent-transcript`;
-      if (conversationId) {
-        url += `?conversation_id=${encodeURIComponent(conversationId)}`;
-        console.log(`[Transcript] 📡 Fetching specific conversation: ${conversationId}`);
-        console.log(`[Transcript] 📡 Request URL: ${url}`);
-      } else {
-        console.log(`[Transcript] 📡 Fetching recent conversations (2h)`);
-        console.log(`[Transcript] 📡 Request URL: ${url}`);
-      }
+      const url = `${backendBase}/conversations/recent-transcript`;
+      console.log(`[Transcript] 📡 Fetching all recent conversations`);
+      console.log(`[Transcript] 📡 Request URL: ${url}`);
 
       const response = await fetch(url, {
         headers: {
@@ -270,11 +238,7 @@ const QAScreen = () => {
         const data = await response.json();
         console.log(`[Transcript] 📥 Response data:`, data);
         setTranscript(data.turns || []);
-        console.log(`[Transcript] ✅ Fetched ${data.count || 0} turns${conversationId ? ' for conversation ' + conversationId : ''}`);
-        
-        if (data.count === 0 && conversationId) {
-          console.warn(`[Transcript] ⚠️ No turns found for conversation ${conversationId} - conversation may not exist or have no turns yet`);
-        }
+        console.log(`[Transcript] ✅ Fetched ${data.count || 0} turns`);
       } else {
         const errorText = await response.text();
         console.error(`[Transcript] ❌ Error ${response.status}:`, errorText);
@@ -355,9 +319,8 @@ const QAScreen = () => {
       // Clear changes only on success
       setFeedbackChanges({});
       
-      // Refresh with current view context (maintain existing conversation if viewing one)
-      const currentConvId = existingConversationId && !startNewConversation && !isVideoCall ? existingConversationId : undefined;
-      await fetchTranscript(currentConvId);
+      // Refresh transcript after saving feedback
+      await fetchTranscript();
       
       toast({ 
         title: "Feedback Saved", 
@@ -630,6 +593,7 @@ const QAScreen = () => {
 
   return (
     <div className="min-h-screen bg-gradient-bg">
+      <NavigationMenu />
       <div className="max-w-6xl mx-auto p-4 space-y-6">
         {/* Header */}
         <div className="text-center py-6">

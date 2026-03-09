@@ -266,7 +266,7 @@ All values will be correctly passed to Cloud Run.
 **Basic Backend Deployment:**
 ```bash
 chmod +x deploy-gcp.sh  # First time only
-./deploy-gcp.sh chief-of-staff-480821
+./deploy-gcp.sh
 ```
 
 **Deploy Both Backend and Frontend:**
@@ -286,7 +286,7 @@ chmod +x deploy-gcp.sh  # First time only
 
 **Parameters:**
 ```bash
-./deploy-gcp.sh <PROJECT_ID> [SERVICE_NAME] [REGION] [MEMORY] [CPU] [DEPLOY_FRONTEND]
+./deploy-gcp.sh [PROJECT_ID] [SERVICE_NAME] [REGION] [MEMORY] [CPU] [DEPLOY_FRONTEND]
 ```
 
 **Defaults:**

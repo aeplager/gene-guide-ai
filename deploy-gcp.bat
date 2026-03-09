@@ -34,7 +34,7 @@ set "MEMORY=%~4"
 set "CPU=%~5"
 set "DOCKERFILE=Dockerfile.backend"
 set "PORT=8081"
-set "ENV_FILE=.env"
+set "ENV_FILE=.env.gcp"
 set "CLOUD_SQL_CONNECTION=chief-of-staff-480821:us-central1:sopheri"
 
 REM Set defaults
@@ -69,10 +69,15 @@ echo   Dockerfile:    %DOCKERFILE%
 echo   Port:          %PORT%
 echo.
 
-REM Check if .env file exists
+REM Check env file with backward-compatible fallback
 if not exist "%ENV_FILE%" (
-    echo [ERROR] %ENV_FILE% file not found! Please create it before deploying.
-    exit /b 1
+    if exist ".env" (
+        echo [WARNING] .env.gcp not found; falling back to .env
+        set "ENV_FILE=.env"
+    ) else (
+        echo [ERROR] %ENV_FILE% file not found! Please create it before deploying.
+        exit /b 1
+    )
 )
 echo [SUCCESS] %ENV_FILE% file found
 

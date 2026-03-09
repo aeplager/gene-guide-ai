@@ -9,6 +9,10 @@
 # 1. One-time setup
 gcloud auth login
 
+# 1.5 Create env files (first time)
+.\scripts\setup-env-files.ps1
+# Update .env.gcp with real values
+
 # 2. Enable required APIs
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com --project=YOUR_PROJECT_ID
 
@@ -16,7 +20,7 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com --project=YO
 .\validate-gcp-setup.ps1 -ProjectId "YOUR_PROJECT_ID"
 
 # 4. Deploy
-.\deploy-gcp.ps1 -ProjectId "YOUR_PROJECT_ID"
+.\scripts\gcp-deploy.ps1 -ProjectId "YOUR_PROJECT_ID"
 ```
 
 ### Linux/macOS/Windows (Bash)
@@ -32,8 +36,15 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com --project=YO
 # 3. Make script executable (first time only)
 chmod +x deploy-gcp.sh
 
+# 3.5 Create env files (first time)
+cp env.gcp.example .env.gcp
+# Update .env.gcp with real values
+
 # 4. Deploy
 ./deploy-gcp.sh YOUR_PROJECT_ID
+
+# Optional: explicitly pass env file
+./deploy-gcp.sh YOUR_PROJECT_ID gene-guide-api us-central1 512Mi 1 true .env.gcp
 ```
 
 ### Windows (CMD/Batch)
@@ -57,14 +68,15 @@ deploy-gcp.bat YOUR_PROJECT_ID
 | `deploy-gcp.bat` | Batch deployment script (Windows) |
 | `validate-gcp-setup.ps1` | Setup validation tool (Windows) |
 | `GCP_CLOUD_RUN_DEPLOYMENT.md` | Complete documentation |
-| `.env` | Environment variables (create from env.example) |
+| `.env.gcp` | GCP environment variables (create from env.gcp.example) |
+| `.env.local` | Local Docker env variables (create from env.local.example) |
 | `Dockerfile.backend` | Docker configuration |
 
 ## ⚙️ Configuration
 
 ### Basic Deploy
 ```powershell
-.\deploy-gcp.ps1 -ProjectId "my-project-123"
+.\deploy-gcp.ps1 -ProjectId "my-project-123" -EnvFile ".env.gcp"
 ```
 
 ### Custom Configuration
@@ -85,10 +97,10 @@ deploy-gcp.bat YOUR_PROJECT_ID
 
 ## 🔧 Default Values
 
-- **Service Name:** `legacy-forever-api`
+- **Service Name:** `gene-guide-api`
 - **Region:** `us-central1`
-- **Memory:** `4Gi`
-- **CPU:** `4`
+- **Memory:** `512Mi`
+- **CPU:** `1`
 - **Port:** `8081`
 - **Min Instances:** `0` (scales to zero)
 - **Max Instances:** `10`
@@ -108,7 +120,7 @@ gcloud services enable run.googleapis.com --project=YOUR_PROJECT_ID
 
 ### Environment Variable Errors
 - Use PowerShell script (better special character handling)
-- Verify `.env` file has no syntax errors
+- Verify `.env.gcp` file has no syntax errors
 
 ### View Logs
 ```bash
@@ -124,7 +136,7 @@ The scripts automatically:
 - ✅ Properly quote and escape values
 - ✅ Skip empty lines
 
-**Example `.env`:**
+**Example `.env.gcp`:**
 ```env
 # Comments are ignored
 DATABASE_URL=postgresql://user:pass%2312@host:5432/db

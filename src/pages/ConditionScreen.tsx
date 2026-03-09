@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import NavigationMenu from "@/components/NavigationMenu";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -158,6 +159,7 @@ const ConditionScreen = () => {
 
   return (
     <div className="min-h-screen bg-gradient-bg p-4">
+      <NavigationMenu />
       <div className="max-w-6xl mx-auto space-y-8">
         {/* Header */}
         <div className="text-center py-8">

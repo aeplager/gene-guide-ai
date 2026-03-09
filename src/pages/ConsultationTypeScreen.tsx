@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import NavigationMenu from "@/components/NavigationMenu";
 import { Video, Phone, ArrowLeft, Sparkles } from "lucide-react";
 
 const ConsultationTypeScreen = () => {
@@ -8,6 +9,7 @@ const ConsultationTypeScreen = () => {
 
   return (
     <div className="min-h-screen bg-gradient-bg">
+      <NavigationMenu />
       <div className="max-w-4xl mx-auto p-4 space-y-6">
         {/* Header */}
         <div className="text-center py-8">

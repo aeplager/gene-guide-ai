@@ -22,12 +22,15 @@ The only requirement is having Node.js & npm installed - [install with nvm](http
 
 Follow these steps:
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+GCP Cloud Run (Bash default):
+```bash
+./deploy-gcp.sh
+```
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+Optional explicit project:
+```bash
+./deploy-gcp.sh YOUR_PROJECT_ID
+```
 
 # Step 3: Install the necessary dependencies.
 npm i
@@ -65,13 +68,34 @@ This project is built with:
 Local (Docker Compose):
 
 ```sh
-cp .env.example .env # or create .env with required variables
-docker compose up -d --build
+cp env.local.example .env.local
+docker compose --env-file .env.local up -d --build
 # Frontend: http://localhost:8090
 # Backend:  http://localhost:8086
 ```
 
-Required .env variables:
+PowerShell helper (Windows):
+
+```powershell
+.\scripts\setup-env-files.ps1
+.\scripts\local-up.ps1
+```
+
+GCP Cloud Run:
+
+```powershell
+Copy-Item env.gcp.example .env.gcp
+# update .env.gcp values
+.\scripts\gcp-deploy.ps1 -ProjectId "YOUR_PROJECT_ID"
+```
+
+Direct deploy script (also supported):
+
+```powershell
+.\deploy-gcp.ps1 -ProjectId "YOUR_PROJECT_ID" -EnvFile ".env.gcp"
+```
+
+Required local env variables:
 
 ```
 # Backend

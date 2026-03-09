@@ -1,19 +1,31 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, Phone, ArrowLeft, Info } from "lucide-react";
+import NavigationMenu from "@/components/NavigationMenu";
+import { AlertTriangle, Phone, ArrowLeft, MessageCircle, FileText, Download, Share } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import LegacyVoiceCallPanel from "@/components/LegacyVoiceCallPanel";
 import { useWarmLLM } from "@/hooks/useWarmLLM";
+import { useToast } from "@/components/ui/use-toast";
 
 const AudioScreen = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   
   // Pre-warm the LLM when user enters this screen
   useWarmLLM();
 
+  const suggestedQuestions = [
+    "What does this mean for my children?",
+    "What screening should I get?",
+    "Can this be prevented?",
+    "How accurate is this test?",
+    "What are my treatment options?"
+  ];
+
   return (
     <div className="min-h-screen bg-gradient-bg">
+      <NavigationMenu />
       <div className="max-w-6xl mx-auto p-4 space-y-6">
         {/* Header */}
         <div className="text-center py-6">
@@ -37,44 +49,83 @@ const AudioScreen = () => {
             <LegacyVoiceCallPanel />
           </div>
 
-          {/* Sidebar - Info & Tips */}
+          {/* Sidebar */}
           <div className="space-y-6">
-            {/* About Audio Consultation */}
+            {/* Common Questions */}
             <Card className="shadow-card">
               <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Info className="h-5 w-5 text-primary" />
-                  About Audio Calls
-                </CardTitle>
+                <CardTitle className="text-lg">Common Questions</CardTitle>
+                <CardDescription>Click to ask</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <p>
-                  Audio consultations provide a convenient way to discuss your genetic test results 
-                  without needing video.
-                </p>
-                <div className="space-y-2">
-                  <p className="font-semibold">Features:</p>
-                  <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                    <li>Natural voice conversation</li>
-                    <li>Real-time AI responses</li>
-                    <li>Mute/unmute controls</li>
-                    <li>Lower bandwidth usage</li>
-                  </ul>
-                </div>
+              <CardContent className="space-y-2">
+                {suggestedQuestions.map((question, index) => (
+                  <Button
+                    key={index}
+                    variant="ghost"
+                    className="w-full justify-start text-left h-auto p-3"
+                    onClick={() => toast({ title: "Suggested Question", description: question })}
+                  >
+                    <MessageCircle className="h-4 w-4 mr-2 flex-shrink-0" />
+                    <span className="text-sm whitespace-normal break-words">{question}</span>
+                  </Button>
+                ))}
               </CardContent>
             </Card>
 
-            {/* Tips for Best Experience */}
+            {/* Actions */}
             <Card className="shadow-card">
               <CardHeader>
-                <CardTitle className="text-lg">Tips for Best Experience</CardTitle>
+                <CardTitle className="text-lg">Actions</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm text-muted-foreground">
-                <p>✓ Use headphones for clearer audio</p>
-                <p>✓ Find a quiet environment</p>
-                <p>✓ Speak clearly and naturally</p>
-                <p>✓ Allow microphone permissions</p>
-                <p>✓ Check your internet connection</p>
+              <CardContent className="space-y-3">
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
+                  onClick={() => toast({ title: "View Source Documentation", description: "Source documentation is available on the video consultation page." })}
+                >
+                  <FileText className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">View Source Documentation</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
+                  onClick={() => toast({ title: "Export for Doctor", description: "Export for Doctor will be available soon." })}
+                >
+                  <Download className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Export for Doctor</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
+                  onClick={() => toast({ title: "Share with Family", description: "Share with Family will be available soon." })}
+                >
+                  <Share className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Share with Family</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
+                  onClick={() => toast({ title: "Download Transcript", description: "Transcript download will be available soon." })}
+                >
+                  <Download className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Download Transcript</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
+                  onClick={() => toast({ title: "Download Summary", description: "Summary download will be available soon." })}
+                >
+                  <Download className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Download Summary</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start items-center h-auto py-3"
+                  onClick={() => toast({ title: "Download Common Questions", description: "Common questions download will be available soon." })}
+                >
+                  <Download className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="whitespace-normal break-words text-left">Download Common Questions</span>
+                </Button>
               </CardContent>
             </Card>
 

@@ -1118,16 +1118,11 @@ def get_recent_tavus_conversation(user_payload):
 @jwt_required(optional=True)
 def get_recent_transcript(user_payload):
     """
-    Fetch recent conversation transcript for authenticated user (last 2 hours by default)
-    OR fetch a specific conversation by tavus_conversation_id if provided
+    Fetch recent conversation transcript for authenticated user (last 1000 turns)
     Used by both Tavus video and Vapi audio to display live transcripts.
     The custom LLM automatically stores all conversation turns in the database.
-    
-    Query Parameters:
-    - conversation_id (optional): Fetch transcript for a specific Tavus conversation ID
     """
     user_email = user_payload.get('email')
-    conversation_id = request.args.get('conversation_id', None)
     
     if not user_email:
         app.logger.warning("⚠️  transcript: No email in JWT")
@@ -1141,59 +1136,29 @@ def get_recent_transcript(user_payload):
     try:
         conn = db_pool.getconn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Fetch transcript using conversations_users table (for Tavus)
-            # This matches the user's SQL query structure
-            
-            if conversation_id:
-                # Fetch specific conversation (regardless of age)
-                # Sort by created_at DESC so most recent messages appear first
-                app.logger.info(f"📋 transcript: Fetching specific conversation {conversation_id} for {user_email}")
-                cur.execute("""
-                    SELECT 
-                        C.id as conversation_id,
-                        CT.ordinal,
-                        CT.created_at,
-                        U.user_email,
-                        C.user_id,
-                        CT.role,
-                        CT.content,
-                        CT.feedback,
-                        CT.feedback_status
-                    FROM public.conversations C 
-                    INNER JOIN public.conversation_turns CT ON C.id = CT.conversation_id  
-                    INNER JOIN public.conversations_users CU
-                        ON C.tavus_conversation_id = CU.tavus_conversation_id
-                    INNER JOIN public.users U ON CU.user_id = U.id 
-                    WHERE U.user_email = %s
-                      AND C.tavus_conversation_id = %s
-                    ORDER BY CT.created_at DESC
-                    LIMIT 10000
-                """, (user_email, conversation_id))
-            else:
-                # Fetch recent conversations (last 2 hours)
-                # Sort by created_at DESC so most recent messages appear first
-                app.logger.info(f"📋 transcript: Fetching recent (2h) conversations for {user_email}")
-                cur.execute("""
-                    SELECT 
-                        C.id as conversation_id,
-                        CT.ordinal,
-                        CT.created_at,
-                        U.user_email,
-                        C.user_id,
-                        CT.role,
-                        CT.content,
-                        CT.feedback,
-                        CT.feedback_status
-                    FROM public.conversations C 
-                    INNER JOIN public.conversation_turns CT ON C.id = CT.conversation_id  
-                    INNER JOIN public.conversations_users CU
-                        ON C.tavus_conversation_id = CU.tavus_conversation_id
-                    INNER JOIN public.users U ON CU.user_id = U.id 
-                    WHERE U.user_email = %s
-                      AND CT.created_at >= (NOW() AT TIME ZONE 'UTC') - INTERVAL '2 hours'
-                    ORDER BY CT.created_at DESC
-                    LIMIT 10000
-                """, (user_email,))
+            # Fetch all recent conversations for the user (both Tavus and Vapi)
+            # Sort by created_at DESC so most recent messages appear first
+            app.logger.info(f"📋 transcript: Fetching recent conversations for {user_email}")
+            cur.execute("""
+                SELECT 
+                    C.id as conversation_id,
+                    CT.ordinal,
+                    CT.created_at,
+                    U.user_email,
+                    C.user_id,
+                    CT.role,
+                    CT.content,
+                    CT.feedback,
+                    CT.feedback_status
+                FROM public.conversations C 
+                INNER JOIN public.conversation_turns CT ON C.id = CT.conversation_id  
+                INNER JOIN public.conversations_users CU
+                    ON C.tavus_conversation_id = CU.tavus_conversation_id
+                INNER JOIN public.users U ON CU.user_id = U.id 
+                WHERE U.user_email = %s
+                ORDER BY CT.created_at DESC
+                LIMIT 1000
+            """, (user_email,))
             
             turns = cur.fetchall()
             
@@ -1201,12 +1166,111 @@ def get_recent_transcript(user_payload):
             
             return jsonify({
                 "turns": [dict(t) for t in turns],
-                "count": len(turns),
-                "conversation_id": conversation_id
+                "count": len(turns)
             }), 200
             
     except Exception as e:
         app.logger.error(f"❌ transcript: Error fetching: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+
+@app.get("/conversations/debug-vapi")
+@jwt_required(optional=True)
+def debug_vapi_conversations(user_payload):
+    """
+    Debug endpoint to check Vapi conversation data in the database.
+    Shows what's in conversations_users, conversations, and conversation_turns for Vapi calls.
+    """
+    user_email = user_payload.get('email') if user_payload else None
+    
+    if not user_email:
+        return jsonify({"error": "No email in JWT"}), 400
+    
+    if not db_pool:
+        return jsonify({"error": "Database not configured"}), 500
+    
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Check conversations_users for Vapi entries (conversation_type_id=3)
+            cur.execute("""
+                SELECT 
+                    CU.id, 
+                    CU.user_id, 
+                    CU.tavus_conversation_id, 
+                    CU.conversation_type_id,
+                    CU.created_at,
+                    U.user_email
+                FROM public.conversations_users CU
+                INNER JOIN public.users U ON CU.user_id = U.id
+                WHERE U.user_email = %s 
+                  AND CU.conversation_type_id = 3
+                ORDER BY CU.created_at DESC
+                LIMIT 10
+            """, (user_email,))
+            conversations_users_entries = cur.fetchall()
+            
+            # Check if there are conversations records with matching tavus_conversation_id
+            conversation_ids = [dict(e)['tavus_conversation_id'] for e in conversations_users_entries]
+            conversations_records = []
+            if conversation_ids:
+                cur.execute("""
+                    SELECT 
+                        C.id,
+                        C.user_id,
+                        C.tavus_conversation_id,
+                        C.conversation_type_id,
+                        C.created_at
+                    FROM public.conversations C
+                    WHERE C.tavus_conversation_id = ANY(%s)
+                    LIMIT 50
+                """, (conversation_ids,))
+                conversations_records = cur.fetchall()
+            
+            # Check conversation_turns for these conversations
+            conversation_db_ids = [dict(c)['id'] for c in conversations_records]
+            turns = []
+            if conversation_db_ids:
+                cur.execute("""
+                    SELECT 
+                        CT.id,
+                        CT.conversation_id,
+                        CT.ordinal,
+                        CT.role,
+                        LEFT(CT.content::text, 100) as content_preview,
+                        CT.created_at
+                    FROM public.conversation_turns CT
+                    WHERE CT.conversation_id = ANY(%s)
+                    ORDER BY CT.created_at DESC
+                    LIMIT 50
+                """, (conversation_db_ids,))
+                turns = cur.fetchall()
+            
+            return jsonify({
+                "user_email": user_email,
+                "conversations_users_count": len(conversations_users_entries),
+                "conversations_users": [dict(e) for e in conversations_users_entries],
+                "conversations_count": len(conversations_records),
+                "conversations": [dict(c) for c in conversations_records],
+                "turns_count": len(turns),
+                "turns": [dict(t) for t in turns],
+                "diagnosis": {
+                    "has_tracked_calls": len(conversations_users_entries) > 0,
+                    "has_conversation_records": len(conversations_records) > 0,
+                    "has_turns": len(turns) > 0,
+                    "issue": "Unknown" if len(conversations_users_entries) == 0 else (
+                        "No conversations table records with matching tavus_conversation_id" if len(conversations_records) == 0 else (
+                            "No conversation_turns for the conversations" if len(turns) == 0 else "Data looks good"
+                        )
+                    )
+                }
+            }), 200
+            
+    except Exception as e:
+        app.logger.error(f"❌ debug-vapi: Error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:
